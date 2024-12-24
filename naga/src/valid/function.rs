@@ -22,6 +22,8 @@ pub enum CallError {
     ResultAlreadyInScope(Handle<crate::Expression>),
     #[error("Result expression {0:?} is populated by multiple `Call` statements")]
     ResultAlreadyPopulated(Handle<crate::Expression>),
+    #[error("Result expression {0:?} is not used")]
+    ResultNotUsed(Handle<crate::Expression>),
     #[error("Result value is invalid")]
     ResultValue(#[source] ExpressionError),
     #[error("Requires {required} arguments, but {seen} are provided")]
@@ -222,6 +224,7 @@ struct BlockContext<'a> {
     abilities: ControlFlowAbility,
     info: &'a FunctionInfo,
     expressions: &'a Arena<crate::Expression>,
+    named_expressions: &'a crate::NamedExpressions,
     types: &'a UniqueArena<crate::Type>,
     local_vars: &'a Arena<crate::LocalVariable>,
     global_vars: &'a Arena<crate::GlobalVariable>,
@@ -242,6 +245,7 @@ impl<'a> BlockContext<'a> {
             abilities: ControlFlowAbility::RETURN,
             info,
             expressions: &fun.expressions,
+            named_expressions: &fun.named_expressions,
             types: &module.types,
             local_vars: &fun.local_variables,
             global_vars: &module.global_variables,
@@ -331,6 +335,14 @@ impl super::Validator {
                 crate::Expression::CallResult(callee)
                     if fun.result.is_some() && callee == function =>
                 {
+                    if fun.result.as_ref().unwrap().must_use
+                        && context.info[expr].ref_count == 0
+                        && context.named_expressions.get(&expr).is_none()
+                    {
+                        return Err(CallError::ResultNotUsed(expr)
+                            .with_span_handle(expr, context.expressions));
+                    }
+
                     if !self.needs_visit.remove(expr) {
                         return Err(CallError::ResultAlreadyPopulated(expr)
                             .with_span_handle(expr, context.expressions));
@@ -1176,15 +1188,16 @@ impl super::Validator {
                     function,
                     ref arguments,
                     result,
-                } => match self.validate_call(function, arguments, result, context) {
-                    Ok(callee_stages) => stages &= callee_stages,
-                    Err(error) => {
-                        return Err(error.and_then(|error| {
-                            FunctionError::InvalidCall { function, error }
-                                .with_span_static(span, "invalid function call")
-                        }))
-                    }
-                },
+                } => {
+                    stages &= self
+                        .validate_call(function, arguments, result, context)
+                        .or_else(|error| {
+                            return Err(error.and_then(|error| {
+                                FunctionError::InvalidCall { function, error }
+                                    .with_span_static(span, "invalid function call")
+                            }));
+                        })?;
+                }
                 S::Atomic {
                     pointer,
                     ref fun,
@@ -1545,6 +1558,7 @@ impl super::Validator {
                 }
             }
         }
+
         Ok(BlockInfo { stages, finished })
     }
 
@@ -1556,6 +1570,8 @@ impl super::Validator {
         let base_expression_count = self.valid_expression_list.len();
         let info = self.validate_block_impl(statements, context)?;
         for handle in self.valid_expression_list.drain(base_expression_count..) {
+            //let expr = &context.expressions[handle];
+            //eprintln!("valid_expression_set remove {handle:?} {expr:?}");
             self.valid_expression_set.remove(handle);
         }
         Ok(info)
@@ -1568,7 +1584,6 @@ impl super::Validator {
         fun_info: &FunctionInfo,
         local_expr_kind: &crate::proc::ExpressionKindTracker,
     ) -> Result<(), LocalVariableError> {
-        log::debug!("var {:?}", var);
         let type_info = self
             .types
             .get(var.ty.index())
@@ -1699,9 +1714,10 @@ impl super::Validator {
         }
 
         if self.flags.contains(super::ValidationFlags::BLOCKS) {
+            let body = &fun.body;
             let stages = self
                 .validate_block(
-                    &fun.body,
+                    body,
                     &BlockContext::new(fun, module, &info, &mod_info.functions),
                 )?
                 .stages;

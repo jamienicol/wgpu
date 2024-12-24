@@ -5919,7 +5919,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ty,
                     init,
                 };
-                let inner = Variable::Output(crate::FunctionResult { ty, binding });
+                let inner = Variable::Output(crate::FunctionResult::bound(ty, binding));
                 (inner, var)
             }
         };

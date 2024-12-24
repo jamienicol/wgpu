@@ -138,10 +138,7 @@ fn populate_call_result() {
         );
 
         let mut fun_callee = Function {
-            result: Some(naga::FunctionResult {
-                ty: ty_u32,
-                binding: None,
-            }),
+            result: Some(naga::FunctionResult::new(ty_u32)),
             ..Function::default()
         };
         let ex_42 = fun_callee

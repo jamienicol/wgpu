@@ -1481,6 +1481,35 @@ fn dead_code() {
 }
 
 #[test]
+#[ignore = "validation can't work if thrown at parsing"]
+fn function_result_unused_validation() {
+    check_validation! {
+        "
+        @must_use
+        fn use_me() -> i32 {
+            return 10;
+        }
+
+        fn useless() -> i32 {
+            use_me();
+            return 0;
+        }
+        ":
+        Err(
+            naga::valid::ValidationError::Function {
+                handle: _caller,
+                name: caller_name,
+                source: naga::valid::FunctionError::InvalidCall {
+                    function: _callee,
+                    error: naga::valid::CallError::ResultNotUsed(_result),
+                },
+            },
+        )
+        if caller_name == "useless"
+    }
+}
+
+#[test]
 fn invalid_runtime_sized_arrays() {
     // You can't have structs whose last member is an unsized struct. An unsized
     // array may only appear as the last member of a struct used directly as a
@@ -2001,6 +2030,32 @@ fn function_returns_void() {
 
 "###,
     )
+}
+
+#[test]
+fn function_result_unused_parsing() {
+    check(
+        r#"
+@must_use
+fn use_me() -> i32 {
+  return 10;
+}
+
+fn useless() -> i32 {
+  use_me();
+  return 0;
+}
+"#,
+        r#"error: function result unused
+  ┌─ wgsl:8:3
+  │
+8 │   use_me();
+  │   ^^^^^^ return value can't be ignored
+  │
+  = note: function `use_me` has `@must_use` attribute
+
+"#,
+    );
 }
 
 #[test]

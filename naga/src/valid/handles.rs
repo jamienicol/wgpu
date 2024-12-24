@@ -187,7 +187,7 @@ impl super::Validator {
                 validate_type(ty)?;
             }
 
-            if let &Some(crate::FunctionResult { ty, binding: _ }) = result {
+            if let &Some(crate::FunctionResult { ty, .. }) = result {
                 validate_type(ty)?;
             }
 

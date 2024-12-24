@@ -47,10 +47,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     None
                 } else {
                     let lookup_result_ty = self.lookup_type.lookup(result_type_id)?;
-                    Some(crate::FunctionResult {
-                        ty: lookup_result_ty.handle,
-                        binding: None,
-                    })
+                    Some(crate::FunctionResult::new(lookup_result_ty.handle))
                 },
                 local_variables: Arena::new(),
                 expressions: self.make_expression_storage(
@@ -530,10 +527,10 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     },
                     span,
                 );
-                function.result = Some(crate::FunctionResult {
-                    ty: member.ty,
-                    binding: member.binding.clone(),
-                });
+                function.result = Some(crate::FunctionResult::bound(
+                    member.ty,
+                    member.binding.clone(),
+                ));
             }
             _ => {
                 let span = crate::Span::total_span(
@@ -559,7 +556,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     },
                     span,
                 );
-                function.result = Some(crate::FunctionResult { ty, binding: None });
+                function.result = Some(crate::FunctionResult::new(ty));
             }
         }
 

@@ -1259,6 +1259,7 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                 Ok(crate::FunctionResult {
                     ty,
                     binding: self.binding(&res.binding, ty, ctx)?,
+                    must_use: res.must_use,
                 })
             })
             .transpose()?;
@@ -1670,7 +1671,7 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                 let mut emitter = Emitter::default();
                 emitter.start(&ctx.function.expressions);
 
-                let _ = self.call(
+                self.call(
                     stmt.span,
                     function,
                     arguments,
@@ -2208,6 +2209,15 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let has_result = ctx.module.functions[function].result.is_some();
+                let must_use = ctx.module.functions[function]
+                    .result
+                    .as_ref()
+                    .is_some_and(|result| result.must_use);
+
+                if must_use && is_statement {
+                    return Err(Error::FunctionResultUnused(span));
+                }
+
                 let rctx = ctx.runtime_expression_ctx(span)?;
                 // we need to always do this before a fn call since all arguments need to be emitted before the fn call
                 rctx.block
