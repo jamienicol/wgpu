@@ -1481,17 +1481,17 @@ fn dead_code() {
 }
 
 #[test]
-#[ignore = "validation can't work if thrown at parsing"]
-fn function_result_unused_validation() {
+#[ignore = "validation can't be tested if parser fails"]
+fn must_use_unused_validation() {
     check_validation! {
         "
         @must_use
-        fn use_me() -> i32 {
+        fn use_me(a: i32) -> i32 {
             return 10;
         }
 
         fn useless() -> i32 {
-            use_me();
+            use_me(1);
             return 0;
         }
         ":
@@ -2033,26 +2033,71 @@ fn function_returns_void() {
 }
 
 #[test]
-fn function_result_unused_parsing() {
+fn function_must_use_unused() {
     check(
         r#"
 @must_use
-fn use_me() -> i32 {
+fn use_me(a: i32) -> i32 {
   return 10;
 }
 
 fn useless() -> i32 {
-  use_me();
+  use_me(1);
   return 0;
 }
 "#,
-        r#"error: function result unused
+        r#"error: must use result
   ┌─ wgsl:8:3
   │
-8 │   use_me();
-  │   ^^^^^^ return value can't be ignored
+8 │   use_me(1);
+  │   ^^^^^^^^^ result unused
   │
-  = note: function `use_me` has `@must_use` attribute
+  = note: function 'use_me' is declared with `@must_use` attribute
+  = note: call the function as part of an expression
+
+"#,
+    );
+}
+
+#[test]
+fn function_must_use_nothing() {
+    check(
+        r#"
+@must_use
+fn use_me(a: i32) {
+  let x = a;
+}
+"#,
+        r#"error: must use nothing
+  ┌─ wgsl:2:2
+  │
+2 │ @must_use
+  │  ^^^^^^^^ requires result
+3 │ fn use_me(a: i32) {
+  │    ^^^^^^^^^^^^^^^^ no result
+  │
+  = note: function 'use_me' is declared with `@must_use` attribute
+  = note: declare a return type or remove the attribute
+
+"#,
+    );
+}
+
+#[test]
+fn function_must_use_repeated() {
+    check(
+        r#"
+@must_use
+@must_use
+fn use_me(a: i32) -> i32 {
+  return 10;
+}
+"#,
+        r#"error: repeated attribute: 'must_use'
+  ┌─ wgsl:3:2
+  │
+3 │ @must_use
+  │  ^^^^^^^^ repeated attribute
 
 "#,
     );

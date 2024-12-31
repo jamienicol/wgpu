@@ -2332,7 +2332,7 @@ impl Parser {
         &mut self,
         lexer: &mut Lexer<'a>,
         diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
-        must_use: Option<bool>,
+        must_use: Option<Span>,
         out: &mut ast::TranslationUnit<'a>,
         dependencies: &mut FastIndexSet<ast::Dependency<'a>>,
     ) -> Result<ast::Function<'a>, Error<'a>> {
@@ -2384,7 +2384,7 @@ impl Parser {
         let result = if lexer.skip(Token::Arrow) {
             let binding = self.varying_binding(lexer, &mut ctx)?;
             let ty = self.type_decl(lexer, &mut ctx)?;
-            let must_use = must_use.unwrap_or_default();
+            let must_use = must_use.is_some();
             Some(ast::FunctionResult {
                 ty,
                 binding,
@@ -2393,6 +2393,13 @@ impl Parser {
         } else {
             None
         };
+
+        if result.is_none() && must_use.is_some() {
+            return Err(Error::FunctionMustUseNothing(
+                must_use.unwrap(),
+                self.pop_rule_span(lexer).until(&lexer.next().1),
+            ));
+        }
 
         // do not use `self.block` here, since we must not push a new scope
         lexer.expect(Token::Paren('{'))?;
@@ -2464,10 +2471,8 @@ impl Parser {
         let mut id = ParsedAttribute::default();
 
         // TODO:
-        // - reject duplicates
-        // - reject on function without result
         // - reject on non-function declarations
-        let mut must_use = ParsedAttribute::default();
+        let mut must_use: ParsedAttribute<Span> = ParsedAttribute::default();
 
         let mut dependencies = FastIndexSet::default();
         let mut ctx = ExpressionContext {
@@ -2554,7 +2559,7 @@ impl Parser {
                     early_depth_test.set(crate::EarlyDepthTest { conservative }, name_span)?;
                 }
                 "must_use" => {
-                    must_use.set(true, name_span)?;
+                    must_use.set(name_span, name_span)?;
                 }
                 _ => return Err(Error::UnknownAttribute(name_span)),
             }

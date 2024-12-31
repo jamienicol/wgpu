@@ -262,7 +262,8 @@ pub(crate) enum Error<'a> {
         found: u32,
     },
     FunctionReturnsVoid(Span),
-    FunctionResultUnused(Span),
+    FunctionMustUseUnused(Span),
+    FunctionMustUseNothing(Span, Span),
     InvalidWorkGroupUniformLoad(Span),
     Internal(&'static str),
     ExpectedConstExprConcreteIntegerScalar(Span),
@@ -821,24 +822,31 @@ impl<'a> Error<'a> {
                     "perhaps you meant to call the function in a separate statement?".into(),
                 ],
             },
-            Error::FunctionResultUnused(span) => {
-                let span = span
-                    .to_range()
-                    .map(|mut r| {
-                        r.end -= 1;
-                        Span::from(r)
-                    })
-                    .unwrap();
-
-                ParseError {
-                    message: "function result unused".into(),
-                    labels: vec![(span, "return value can't be ignored".into())],
-                    notes: vec![format!(
-                        "function `{}` has `@must_use` attribute",
-                        &source[span]
-                    )],
-                }
-            }
+            Error::FunctionMustUseUnused(call) => ParseError {
+                message: "must use result".into(),
+                labels: vec![(call, "result unused".into())],
+                notes: vec![
+                    format!(
+                        "function '{}' is declared with `@must_use` attribute",
+                        &source[call].split_once('(').unwrap().0
+                    ),
+                    "call the function as part of an expression".into(),
+                ],
+            },
+            Error::FunctionMustUseNothing(attr, signature) => ParseError {
+                message: "must use nothing".into(),
+                labels: vec![
+                    (attr, "requires result".into()),
+                    (signature, "no result".into()),
+                ],
+                notes: vec![
+                    format!(
+                        "function '{}' is declared with `@must_use` attribute",
+                        &source[signature].split_once('(').unwrap().0
+                    ),
+                    "declare a return type or remove the attribute".into(),
+                ],
+            },
             Error::InvalidWorkGroupUniformLoad(span) => ParseError {
                 message: "incorrect type passed to workgroupUniformLoad".into(),
                 labels: vec![(span, "".into())],

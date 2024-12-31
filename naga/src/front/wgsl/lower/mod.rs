@@ -2215,7 +2215,7 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                     .is_some_and(|result| result.must_use);
 
                 if must_use && is_statement {
-                    return Err(Error::FunctionResultUnused(span));
+                    return Err(Error::FunctionMustUseUnused(span));
                 }
 
                 let rctx = ctx.runtime_expression_ctx(span)?;
