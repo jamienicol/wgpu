@@ -533,6 +533,7 @@
                 result: Some((
                     ty: 11,
                     binding: None,
+                    must_use: false,
                 )),
                 local_variables: [],
                 expressions: [
