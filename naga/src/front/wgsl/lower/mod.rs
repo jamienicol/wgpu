@@ -2060,11 +2060,9 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
 
                         lowered_base.map(|base| crate::Expression::AccessIndex { base, index })
                     }
-                    crate::TypeInner::Vector { .. } | crate::TypeInner::Matrix { .. } => {
+                    crate::TypeInner::Vector { .. } => {
                         match Components::new(field.name, field.span)? {
                             Components::Swizzle { size, pattern } => {
-                                // Swizzles aren't allowed on matrices, but
-                                // validation will catch that.
                                 Typed::Plain(crate::Expression::Swizzle {
                                     size,
                                     vector: ctx.apply_load_rule(lowered_base)?,
@@ -2304,22 +2302,18 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                     args.finish()?;
 
                     if fun == crate::MathFunction::Modf || fun == crate::MathFunction::Frexp {
-                        if let Some((size, width)) = match *resolve_inner!(ctx, arg) {
-                            crate::TypeInner::Scalar(crate::Scalar { width, .. }) => {
-                                Some((None, width))
+                        if let Some((size, scalar)) = match *resolve_inner!(ctx, arg) {
+                            crate::TypeInner::Scalar(scalar) => Some((None, scalar)),
+                            crate::TypeInner::Vector { size, scalar, .. } => {
+                                Some((Some(size), scalar))
                             }
-                            crate::TypeInner::Vector {
-                                size,
-                                scalar: crate::Scalar { width, .. },
-                                ..
-                            } => Some((Some(size), width)),
                             _ => None,
                         } {
                             ctx.module.generate_predeclared_type(
                                 if fun == crate::MathFunction::Modf {
-                                    crate::PredeclaredType::ModfResult { size, width }
+                                    crate::PredeclaredType::ModfResult { size, scalar }
                                 } else {
-                                    crate::PredeclaredType::FrexpResult { size, width }
+                                    crate::PredeclaredType::FrexpResult { size, scalar }
                                 },
                             );
                         }
@@ -2430,6 +2424,50 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                                 span,
                             );
                             return Ok(Some(result));
+                        }
+                        "textureAtomicMin" | "textureAtomicMax" | "textureAtomicAdd"
+                        | "textureAtomicAnd" | "textureAtomicOr" | "textureAtomicXor" => {
+                            let mut args = ctx.prepare_args(arguments, 3, span);
+
+                            let image = args.next()?;
+                            let image_span = ctx.ast_expressions.get_span(image);
+                            let image = self.expression(image, ctx)?;
+
+                            let coordinate = self.expression(args.next()?, ctx)?;
+
+                            let (_, arrayed) = ctx.image_data(image, image_span)?;
+                            let array_index = arrayed
+                                .then(|| {
+                                    args.min_args += 1;
+                                    self.expression(args.next()?, ctx)
+                                })
+                                .transpose()?;
+
+                            let value = self.expression(args.next()?, ctx)?;
+
+                            args.finish()?;
+
+                            let rctx = ctx.runtime_expression_ctx(span)?;
+                            rctx.block
+                                .extend(rctx.emitter.finish(&rctx.function.expressions));
+                            rctx.emitter.start(&rctx.function.expressions);
+                            let stmt = crate::Statement::ImageAtomic {
+                                image,
+                                coordinate,
+                                array_index,
+                                fun: match function.name {
+                                    "textureAtomicMin" => crate::AtomicFunction::Min,
+                                    "textureAtomicMax" => crate::AtomicFunction::Max,
+                                    "textureAtomicAdd" => crate::AtomicFunction::Add,
+                                    "textureAtomicAnd" => crate::AtomicFunction::And,
+                                    "textureAtomicOr" => crate::AtomicFunction::InclusiveOr,
+                                    "textureAtomicXor" => crate::AtomicFunction::ExclusiveOr,
+                                    _ => unreachable!(),
+                                },
+                                value,
+                            };
+                            rctx.block.push(stmt, span);
+                            return Ok(None);
                         }
                         "storageBarrier" => {
                             ctx.prepare_args(arguments, 0, span).finish()?;
