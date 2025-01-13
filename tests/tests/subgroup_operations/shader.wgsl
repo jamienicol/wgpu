@@ -90,6 +90,7 @@ fn main(
     }
     add_result_to_mask(&passed, 16u, subgroupExclusiveMul(global_id.x + 1u) == expected);
 
+    // Mac/Apple will sometimes fail this test. MacOS 15.0 passes it, so the bug in the metal compiler seems to be fixed.
     expected = 0u;
     for(var i = 0u; i <= subgroup_invocation_id; i += 1u) {
         expected += global_id.x - subgroup_invocation_id + i + 1u;

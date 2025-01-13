@@ -1,5 +1,6 @@
 void fb1_(inout bool cond)
 {
+    uint2 loop_bound = uint2(0u, 0u);
     bool loop_init = true;
     while(true) {
         if (!loop_init) {
@@ -10,6 +11,8 @@ void fb1_(inout bool cond)
         }
         loop_init = false;
         continue;
+        if (all(loop_bound == uint2(4294967295u, 4294967295u))) { break; }
+        loop_bound += uint2(loop_bound.y == 4294967295u, 1u);
     }
     return;
 }

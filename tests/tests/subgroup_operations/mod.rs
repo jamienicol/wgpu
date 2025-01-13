@@ -17,15 +17,21 @@ static SUBGROUP_OPERATIONS: GpuTestConfiguration = GpuTestConfiguration::new()
             // are not matched against.
             .expect_fail(
                 wgpu_test::FailureCase::molten_vk()
-                    // 14.3 doesn't fail test 29
+                    // 15.0 doesn't fail test 17
                     .panic("thread 0 failed tests: 27,\nthread 1 failed tests: 27, 28,\n")
+                    // 14.3 doesn't fail test 29
+                    .panic("thread 0 failed tests: 27,\nthread 1 failed tests: 17, 27, 28,\n")
                     // Prior versions do.
-                    .panic("thread 0 failed tests: 27, 29,\nthread 1 failed tests: 27, 28, 29,\n"),
+                    .panic(
+                        "thread 0 failed tests: 27, 29,\nthread 1 failed tests: 17, 27, 28, 29,\n",
+                    ),
             )
             .expect_fail(
                 wgpu_test::FailureCase::backend(wgpu::Backends::METAL)
-                    // 14.3 doesn't fail test 29
+                    // 15.0 doesn't fail test 17
                     .panic("thread 0 failed tests: 27,\nthread 1 failed tests: 27, 28,\n")
+                    // 14.3 doesn't fail test 29
+                    .panic("thread 0 failed tests: 27,\nthread 1 failed tests: 17, 27, 28,\n")
                     // Prior versions do.
                     .panic("thread 0 failed tests: 27, 29,\nthread 1 failed tests: 27, 28, 29,\n"),
             ),

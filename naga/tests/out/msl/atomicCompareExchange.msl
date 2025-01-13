@@ -76,6 +76,7 @@ kernel void test_atomic_compare_exchange_i32_(
     uint i = 0u;
     int old = {};
     bool exchanged = {};
+    uint2 loop_bound = uint2(0u);
     bool loop_init = true;
     while(true) {
         if (!loop_init) {
@@ -93,6 +94,7 @@ kernel void test_atomic_compare_exchange_i32_(
             int _e8 = metal::atomic_load_explicit(&arr_i32_.inner[_e6], metal::memory_order_relaxed);
             old = _e8;
             exchanged = false;
+            uint2 loop_bound_1 = uint2(0u);
             while(true) {
                 bool _e12 = exchanged;
                 if (!(_e12)) {
@@ -108,11 +110,12 @@ kernel void test_atomic_compare_exchange_i32_(
                     old = _e23.old_value;
                     exchanged = _e23.exchanged;
                 }
-#define LOOP_IS_BOUNDED { volatile bool unpredictable_break_from_loop = false; if (unpredictable_break_from_loop) break; }
-                LOOP_IS_BOUNDED
+                if (metal::all(loop_bound_1 == uint2(4294967295u))) { break; }
+                loop_bound_1 += uint2(loop_bound_1.y == 4294967295u, 1u);
             }
         }
-        LOOP_IS_BOUNDED
+        if (metal::all(loop_bound == uint2(4294967295u))) { break; }
+        loop_bound += uint2(loop_bound.y == 4294967295u, 1u);
     }
     return;
 }
@@ -124,6 +127,7 @@ kernel void test_atomic_compare_exchange_u32_(
     uint i_1 = 0u;
     uint old_1 = {};
     bool exchanged_1 = {};
+    uint2 loop_bound_2 = uint2(0u);
     bool loop_init_1 = true;
     while(true) {
         if (!loop_init_1) {
@@ -141,6 +145,7 @@ kernel void test_atomic_compare_exchange_u32_(
             uint _e8 = metal::atomic_load_explicit(&arr_u32_.inner[_e6], metal::memory_order_relaxed);
             old_1 = _e8;
             exchanged_1 = false;
+            uint2 loop_bound_3 = uint2(0u);
             while(true) {
                 bool _e12 = exchanged_1;
                 if (!(_e12)) {
@@ -156,10 +161,12 @@ kernel void test_atomic_compare_exchange_u32_(
                     old_1 = _e23.old_value;
                     exchanged_1 = _e23.exchanged;
                 }
-                LOOP_IS_BOUNDED
+                if (metal::all(loop_bound_3 == uint2(4294967295u))) { break; }
+                loop_bound_3 += uint2(loop_bound_3.y == 4294967295u, 1u);
             }
         }
-        LOOP_IS_BOUNDED
+        if (metal::all(loop_bound_2 == uint2(4294967295u))) { break; }
+        loop_bound_2 += uint2(loop_bound_2.y == 4294967295u, 1u);
     }
     return;
 }

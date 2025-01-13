@@ -92,6 +92,7 @@ float4 fs_main(FragmentInput_fs_main fragmentinput_fs_main) : SV_Target0
     uint i = 0u;
 
     float3 normal_1 = normalize(in_.world_normal);
+    uint2 loop_bound = uint2(0u, 0u);
     bool loop_init = true;
     while(true) {
         if (!loop_init) {
@@ -115,6 +116,8 @@ float4 fs_main(FragmentInput_fs_main fragmentinput_fs_main) : SV_Target0
             float3 _e37 = color;
             color = (_e37 + ((_e23 * diffuse) * light.color.xyz));
         }
+        if (all(loop_bound == uint2(4294967295u, 4294967295u))) { break; }
+        loop_bound += uint2(loop_bound.y == 4294967295u, 1u);
     }
     float3 _e42 = color;
     float4 _e47 = u_entity.color;
@@ -128,6 +131,7 @@ float4 fs_main_without_storage(FragmentInput_fs_main_without_storage fragmentinp
     uint i_1 = 0u;
 
     float3 normal_2 = normalize(in_1.world_normal);
+    uint2 loop_bound_1 = uint2(0u, 0u);
     bool loop_init_1 = true;
     while(true) {
         if (!loop_init_1) {
@@ -151,6 +155,8 @@ float4 fs_main_without_storage(FragmentInput_fs_main_without_storage fragmentinp
             float3 _e37 = color_1;
             color_1 = (_e37 + ((_e23 * diffuse_1) * light_1.color.xyz));
         }
+        if (all(loop_bound_1 == uint2(4294967295u, 4294967295u))) { break; }
+        loop_bound_1 += uint2(loop_bound_1.y == 4294967295u, 1u);
     }
     float3 _e42 = color_1;
     float4 _e47 = u_entity.color;
