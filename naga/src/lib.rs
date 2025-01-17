@@ -2164,7 +2164,7 @@ pub struct FunctionResult {
 }
 
 impl FunctionResult {
-    pub fn new(ty: Handle<Type>) -> Self {
+    pub const fn new(ty: Handle<Type>) -> Self {
         Self {
             ty,
             binding: None,
@@ -2172,7 +2172,7 @@ impl FunctionResult {
         }
     }
 
-    pub fn bound(ty: Handle<Type>, binding: Option<Binding>) -> Self {
+    pub const fn bound(ty: Handle<Type>, binding: Option<Binding>) -> Self {
         Self {
             ty,
             binding,

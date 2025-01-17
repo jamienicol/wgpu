@@ -1191,11 +1191,11 @@ impl super::Validator {
                 } => {
                     stages &= self
                         .validate_call(function, arguments, result, context)
-                        .or_else(|error| {
-                            return Err(error.and_then(|error| {
+                        .map_err(|error| {
+                            error.and_then(|error| {
                                 FunctionError::InvalidCall { function, error }
                                     .with_span_static(span, "invalid function call")
-                            }));
+                            })
                         })?;
                 }
                 S::Atomic {

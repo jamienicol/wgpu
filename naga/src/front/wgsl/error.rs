@@ -263,7 +263,7 @@ pub(crate) enum Error<'a> {
     },
     FunctionReturnsVoid(Span),
     FunctionMustUseUnused(Span),
-    FunctionMustUseNothing(Span, Span),
+    FunctionMustUseReturnsVoid(Span, Span),
     InvalidWorkGroupUniformLoad(Span),
     Internal(&'static str),
     ExpectedConstExprConcreteIntegerScalar(Span),
@@ -823,29 +823,20 @@ impl<'a> Error<'a> {
                 ],
             },
             Error::FunctionMustUseUnused(call) => ParseError {
-                message: "must use result".into(),
-                labels: vec![(call, "result unused".into())],
+                message: "unused return value from function annotated with @must_use".into(),
+                labels: vec![(call, "".into())],
                 notes: vec![
                     format!(
-                        "function '{}' is declared with `@must_use` attribute",
+                        "function `{}` is annotated with `@must_use` attribute",
                         &source[call].split_once('(').unwrap().0
                     ),
-                    "call the function as part of an expression".into(),
+                    "use phony assignment to ignore returned value".into(),
                 ],
             },
-            Error::FunctionMustUseNothing(attr, signature) => ParseError {
-                message: "must use nothing".into(),
-                labels: vec![
-                    (attr, "requires result".into()),
-                    (signature, "no result".into()),
-                ],
-                notes: vec![
-                    format!(
-                        "function '{}' is declared with `@must_use` attribute",
-                        &source[signature].split_once('(').unwrap().0
-                    ),
-                    "declare a return type or remove the attribute".into(),
-                ],
+            Error::FunctionMustUseReturnsVoid(attr, signature) => ParseError {
+                message: "function annotated with @must_use but has no return type".into(),
+                labels: vec![(attr, "".into()), (signature, "".into())],
+                notes: vec!["declare a return type or remove the attribute".into()],
             },
             Error::InvalidWorkGroupUniformLoad(span) => ParseError {
                 message: "incorrect type passed to workgroupUniformLoad".into(),

@@ -1481,35 +1481,6 @@ fn dead_code() {
 }
 
 #[test]
-#[ignore = "validation can't be tested if parser fails"]
-fn must_use_unused_validation() {
-    check_validation! {
-        "
-        @must_use
-        fn use_me(a: i32) -> i32 {
-            return 10;
-        }
-
-        fn useless() -> i32 {
-            use_me(1);
-            return 0;
-        }
-        ":
-        Err(
-            naga::valid::ValidationError::Function {
-                handle: _caller,
-                name: caller_name,
-                source: naga::valid::FunctionError::InvalidCall {
-                    function: _callee,
-                    error: naga::valid::CallError::ResultNotUsed(_result),
-                },
-            },
-        )
-        if caller_name == "useless"
-    }
-}
-
-#[test]
 fn invalid_runtime_sized_arrays() {
     // You can't have structs whose last member is an unsized struct. An unsized
     // array may only appear as the last member of a struct used directly as a
@@ -2046,21 +2017,21 @@ fn useless() -> i32 {
   return 0;
 }
 "#,
-        r#"error: must use result
+        r#"error: unused return value from function annotated with @must_use
   ┌─ wgsl:8:3
   │
 8 │   use_me(1);
-  │   ^^^^^^^^^ result unused
+  │   ^^^^^^^^^
   │
-  = note: function 'use_me' is declared with `@must_use` attribute
-  = note: call the function as part of an expression
+  = note: function `use_me` is annotated with `@must_use` attribute
+  = note: use phony assignment to ignore returned value
 
 "#,
     );
 }
 
 #[test]
-fn function_must_use_nothing() {
+fn function_must_use_returns_void() {
     check(
         r#"
 @must_use
@@ -2068,15 +2039,14 @@ fn use_me(a: i32) {
   let x = a;
 }
 "#,
-        r#"error: must use nothing
+        r#"error: function annotated with @must_use but has no return type
   ┌─ wgsl:2:2
   │
 2 │ @must_use
-  │  ^^^^^^^^ requires result
+  │  ^^^^^^^^
 3 │ fn use_me(a: i32) {
-  │    ^^^^^^^^^^^^^^^^ no result
+  │    ^^^^^^^^^^^^^
   │
-  = note: function 'use_me' is declared with `@must_use` attribute
   = note: declare a return type or remove the attribute
 
 "#,
@@ -2093,7 +2063,7 @@ fn use_me(a: i32) -> i32 {
   return 10;
 }
 "#,
-        r#"error: repeated attribute: 'must_use'
+        r#"error: repeated attribute: `must_use`
   ┌─ wgsl:3:2
   │
 3 │ @must_use

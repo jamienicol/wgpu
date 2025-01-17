@@ -2384,21 +2384,22 @@ impl Parser {
         let result = if lexer.skip(Token::Arrow) {
             let binding = self.varying_binding(lexer, &mut ctx)?;
             let ty = self.type_decl(lexer, &mut ctx)?;
-            let must_use = must_use.is_some();
             Some(ast::FunctionResult {
                 ty,
                 binding,
-                must_use,
+                must_use: must_use.is_some(),
             })
         } else {
             None
         };
 
-        if result.is_none() && must_use.is_some() {
-            return Err(Error::FunctionMustUseNothing(
-                must_use.unwrap(),
-                self.pop_rule_span(lexer).until(&lexer.next().1),
-            ));
+        if let Some(must_use) = must_use {
+            if result.is_none() {
+                return Err(Error::FunctionMustUseReturnsVoid(
+                    must_use,
+                    self.peek_rule_span(lexer),
+                ));
+            }
         }
 
         // do not use `self.block` here, since we must not push a new scope
@@ -2470,8 +2471,6 @@ impl Parser {
             (ParsedAttribute::default(), ParsedAttribute::default());
         let mut id = ParsedAttribute::default();
 
-        // TODO:
-        // - reject on non-function declarations
         let mut must_use: ParsedAttribute<Span> = ParsedAttribute::default();
 
         let mut dependencies = FastIndexSet::default();

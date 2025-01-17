@@ -1371,7 +1371,7 @@ impl Frontend {
                 arguments,
                 expressions,
                 body,
-                result: ty.map(|ty| FunctionResult::new(ty)),
+                result: ty.map(FunctionResult::new),
                 ..Default::default()
             },
         });
