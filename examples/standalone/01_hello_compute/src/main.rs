@@ -178,7 +178,7 @@ fn main() {
         label: None,
         layout: Some(&pipeline_layout),
         module: &module,
-        entry_point: Some("doubleMe"),
+        entry_point: Some("main"),
         compilation_options: wgpu::PipelineCompilationOptions::default(),
         cache: None,
     });
