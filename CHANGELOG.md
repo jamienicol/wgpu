@@ -48,6 +48,11 @@ Bottom level categories:
 
 ### Changes
 
+#### Naga
+
+- Ensure loops emitted by SPIR-V backend are bounded to avoid undefined behaviour due to infinite loops. By @jamienicol in [#7080](https://github.com/gfx-rs/wgpu/pull/7080).
+- Ensure loops emitted by HLSL backend are bounded to avoid undefined behaviour due to infinite loops. By @jamienicol in [#6929](https://github.com/gfx-rs/wgpu/pull/6929).
+
 #### General
 
 - Avoid using default features in many dependencies, etc. By Brody in [#7031](https://github.com/gfx-rs/wgpu/pull/7031)

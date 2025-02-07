@@ -32,6 +32,9 @@ impl Function {
                 for local_var in self.variables.values() {
                     local_var.instruction.to_words(sink);
                 }
+                for local_var in self.force_loop_bounding_vars.iter() {
+                    local_var.instruction.to_words(sink);
+                }
                 for internal_var in self.spilled_composites.values() {
                     internal_var.instruction.to_words(sink);
                 }
@@ -70,6 +73,7 @@ impl Writer {
             flags: options.flags,
             bounds_check_policies: options.bounds_check_policies,
             zero_initialize_workgroup_memory: options.zero_initialize_workgroup_memory,
+            force_loop_bounding: options.force_loop_bounding,
             void_type,
             lookup_type: crate::FastHashMap::default(),
             lookup_function: crate::FastHashMap::default(),
@@ -109,6 +113,7 @@ impl Writer {
             flags: self.flags,
             bounds_check_policies: self.bounds_check_policies,
             zero_initialize_workgroup_memory: self.zero_initialize_workgroup_memory,
+            force_loop_bounding: self.force_loop_bounding,
             capabilities_available: take(&mut self.capabilities_available),
             binding_map: take(&mut self.binding_map),
 
@@ -260,6 +265,14 @@ impl Writer {
         self.get_type_id(local_type.into())
     }
 
+    pub(super) fn get_uint2_type_id(&mut self) -> Word {
+        let local_type = LocalType::Numeric(NumericType::Vector {
+            size: crate::VectorSize::Bi,
+            scalar: crate::Scalar::U32,
+        });
+        self.get_type_id(local_type.into())
+    }
+
     pub(super) fn get_uint3_type_id(&mut self) -> Word {
         let local_type = LocalType::Numeric(NumericType::Vector {
             size: crate::VectorSize::Tri,
@@ -271,6 +284,17 @@ impl Writer {
     pub(super) fn get_float_pointer_type_id(&mut self, class: spirv::StorageClass) -> Word {
         let local_type = LocalType::LocalPointer {
             base: NumericType::Scalar(crate::Scalar::F32),
+            class,
+        };
+        self.get_type_id(local_type.into())
+    }
+
+    pub(super) fn get_uint2_pointer_type_id(&mut self, class: spirv::StorageClass) -> Word {
+        let local_type = LocalType::LocalPointer {
+            base: NumericType::Vector {
+                size: crate::VectorSize::Bi,
+                scalar: crate::Scalar::U32,
+            },
             class,
         };
         self.get_type_id(local_type.into())
@@ -289,6 +313,14 @@ impl Writer {
 
     pub(super) fn get_bool_type_id(&mut self) -> Word {
         let local_type = LocalType::Numeric(NumericType::Scalar(crate::Scalar::BOOL));
+        self.get_type_id(local_type.into())
+    }
+
+    pub(super) fn get_bool2_type_id(&mut self) -> Word {
+        let local_type = LocalType::Numeric(NumericType::Vector {
+            size: crate::VectorSize::Bi,
+            scalar: crate::Scalar::BOOL,
+        });
         self.get_type_id(local_type.into())
     }
 
@@ -582,6 +614,8 @@ impl Writer {
             self.global_variables[handle] = gv;
         }
 
+        let force_loop_bounding = self.force_loop_bounding;
+
         // Create a `BlockContext` for generating SPIR-V for the function's
         // body.
         let mut context = BlockContext {
@@ -598,6 +632,7 @@ impl Writer {
             expression_constness: super::ExpressionConstnessTracker::from_arena(
                 &ir_function.expressions,
             ),
+            next_loop_bounding_var_idx: 0,
         };
 
         // fill up the pre-emitted and const expressions
@@ -639,6 +674,10 @@ impl Writer {
                 .function
                 .variables
                 .insert(handle, LocalVariable { id, instruction });
+        }
+
+        if force_loop_bounding {
+            context.add_force_loop_bounding_vars(&ir_function.body);
         }
 
         for (handle, expr) in ir_function.expressions.iter() {

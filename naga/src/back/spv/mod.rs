@@ -144,6 +144,10 @@ struct Function {
     signature: Option<Instruction>,
     parameters: Vec<FunctionArgument>,
     variables: crate::FastHashMap<Handle<crate::LocalVariable>, LocalVariable>,
+    /// List of local variables used as a counters to ensure that all loops are bounded.
+    /// This must be populated by calling [`add_force_loop_bounding_vars()`](BlockContext::add_force_loop_bounding_vars)
+    /// before generating any code for the function.
+    force_loop_bounding_vars: Vec<LocalVariable>,
 
     /// A map taking an expression that yields a composite value (array, matrix)
     /// to the temporary variables we have spilled it to, if any. Spilling
@@ -694,6 +698,10 @@ struct BlockContext<'w> {
 
     /// Tracks the constness of `Expression`s residing in `self.ir_function.expressions`
     expression_constness: ExpressionConstnessTracker,
+
+    /// Index of the local variable in [`Function::force_loop_bounding_vars`] to use for
+    /// the next loop statement encountered whilst generating code.
+    next_loop_bounding_var_idx: usize,
 }
 
 impl BlockContext<'_> {
@@ -747,6 +755,7 @@ pub struct Writer {
     flags: WriterFlags,
     bounds_check_policies: BoundsCheckPolicies,
     zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode,
+    force_loop_bounding: bool,
     void_type: Word,
     //TODO: convert most of these into vectors, addressable by handle indices
     lookup_type: crate::FastHashMap<LookupType, Word>,
@@ -846,6 +855,10 @@ pub struct Options<'a> {
     /// Dictates the way workgroup variables should be zero initialized
     pub zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode,
 
+    /// If set, loops will have code injected into them, forcing the compiler
+    /// to think the number of iterations is bounded.
+    pub force_loop_bounding: bool,
+
     pub debug_info: Option<DebugInfo<'a>>,
 }
 
@@ -864,6 +877,7 @@ impl Default for Options<'_> {
             capabilities: None,
             bounds_check_policies: BoundsCheckPolicies::default(),
             zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode::Polyfill,
+            force_loop_bounding: true,
             debug_info: None,
         }
     }

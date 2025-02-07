@@ -260,6 +260,221 @@ impl Writer {
 }
 
 impl BlockContext<'_> {
+    /// Recursively finds all loops belonging to a block and adds a variable to
+    /// [`force_loop_bounding_vars`](super::Function::force_loop_bounding_vars).
+    /// These variables will be used by [`write_force_bounded_loop_instructions()`](BlockContext::write_force_bounded_loop_instructions)
+    /// when generating code to ensure that all loops are bounded.
+    ///
+    /// This must be called for the function's [body](crate::Function::body) block prior
+    /// to generating any code any code for the function, as SPIRV requires all local
+    /// variables to be declared at the start of the first block of the function.
+    pub fn add_force_loop_bounding_vars(&mut self, block: &crate::Block) {
+        for statement in block.iter() {
+            match *statement {
+                Statement::Block(ref block) => {
+                    self.add_force_loop_bounding_vars(block);
+                }
+                Statement::If {
+                    ref accept,
+                    ref reject,
+                    ..
+                } => {
+                    self.add_force_loop_bounding_vars(accept);
+                    self.add_force_loop_bounding_vars(reject);
+                }
+                Statement::Switch { ref cases, .. } => {
+                    for case in cases {
+                        self.add_force_loop_bounding_vars(&case.body);
+                    }
+                }
+                Statement::Loop { ref body, .. } => {
+                    let id = self.gen_id();
+                    let zero_uint_const_id =
+                        self.writer.get_constant_scalar(crate::Literal::U32(0));
+                    let zero_uint2_const_id = self.writer.get_constant_composite(
+                        LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                            size: crate::VectorSize::Bi,
+                            scalar: crate::Scalar::U32,
+                        })),
+                        &[zero_uint_const_id, zero_uint_const_id],
+                    );
+                    let uint2_ptr_type_id = self
+                        .writer
+                        .get_uint2_pointer_type_id(spirv::StorageClass::Function);
+                    let var = super::LocalVariable {
+                        id,
+                        instruction: Instruction::variable(
+                            uint2_ptr_type_id,
+                            id,
+                            spirv::StorageClass::Function,
+                            Some(zero_uint2_const_id),
+                        ),
+                    };
+                    if self.writer.flags.contains(WriterFlags::DEBUG) {
+                        self.writer.debugs.push(Instruction::name(id, "loop_bound"));
+                    }
+                    self.function.force_loop_bounding_vars.push(var);
+                    self.add_force_loop_bounding_vars(body);
+                }
+                Statement::Emit(_)
+                | Statement::Break
+                | Statement::Continue
+                | Statement::Return { .. }
+                | Statement::Kill
+                | Statement::Barrier(_)
+                | Statement::Store { .. }
+                | Statement::ImageStore { .. }
+                | Statement::Atomic { .. }
+                | Statement::ImageAtomic { .. }
+                | Statement::WorkGroupUniformLoad { .. }
+                | Statement::Call { .. }
+                | Statement::RayQuery { .. }
+                | Statement::SubgroupBallot { .. }
+                | Statement::SubgroupGather { .. }
+                | Statement::SubgroupCollectiveOperation { .. } => {}
+            }
+        }
+    }
+
+    /// Obtains the ID of the loop counter variable that should be used to ensure that
+    /// the next loop encountered whilst generating code for the function is bounded.
+    fn next_force_loop_bounding_var_id(&mut self) -> Option<Word> {
+        match self
+            .function
+            .force_loop_bounding_vars
+            .get(self.next_loop_bounding_var_idx)
+        {
+            Some(var) => {
+                self.next_loop_bounding_var_idx += 1;
+                Some(var.id)
+            }
+            None => None,
+        }
+    }
+
+    /// Generates code to ensure that a loop is bounded. Should be called immediately
+    /// after adding the OpLoopMerge instruction to `block`. This function will
+    /// [`consume()`](super::Function::consume) `block` and append its instructions to a
+    /// new [`Block`], which will be returned to the caller for it to consumed prior to
+    /// writing the loop body.
+    ///
+    /// See [`crate::back::msl::Writer::gen_force_bounded_loop_statements`] for details
+    /// of why this is required.
+    fn write_force_bounded_loop_instructions(
+        &mut self,
+        mut block: Block,
+        merge_id: Word,
+        loop_counter_var_id: Word,
+    ) -> Block {
+        let uint_type_id = self.writer.get_uint_type_id();
+        let uint2_type_id = self.writer.get_uint2_type_id();
+        let bool_type_id = self.writer.get_bool_type_id();
+        let bool2_type_id = self.writer.get_bool2_type_id();
+        let zero_uint_const_id = self.writer.get_constant_scalar(crate::Literal::U32(0));
+        let one_uint_const_id = self.writer.get_constant_scalar(crate::Literal::U32(1));
+        let max_uint_const_id = self
+            .writer
+            .get_constant_scalar(crate::Literal::U32(u32::MAX));
+        let max_uint2_const_id = self.writer.get_constant_composite(
+            LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                size: crate::VectorSize::Bi,
+                scalar: crate::Scalar::U32,
+            })),
+            &[max_uint_const_id, max_uint_const_id],
+        );
+
+        let break_if_block = self.gen_id();
+
+        self.function
+            .consume(block, Instruction::branch(break_if_block));
+        block = Block::new(break_if_block);
+
+        // Load the current loop counter value from its variable. We use a vec2<u32> to
+        // simulate a 64-bit counter.
+        let load_id = self.gen_id();
+        block.body.push(Instruction::load(
+            uint2_type_id,
+            load_id,
+            loop_counter_var_id,
+            None,
+        ));
+
+        // If both the high and low u32s have reached u32::MAX then break. ie
+        // if (all(eq(loop_counter, vec2(u32::MAX)))) { break; }
+        let eq_id = self.gen_id();
+        block.body.push(Instruction::binary(
+            spirv::Op::IEqual,
+            bool2_type_id,
+            eq_id,
+            max_uint2_const_id,
+            load_id,
+        ));
+        let all_eq_id = self.gen_id();
+        block.body.push(Instruction::relational(
+            spirv::Op::All,
+            bool_type_id,
+            all_eq_id,
+            eq_id,
+        ));
+
+        let inc_counter_block_id = self.gen_id();
+        block.body.push(Instruction::selection_merge(
+            inc_counter_block_id,
+            spirv::SelectionControl::empty(),
+        ));
+        self.function.consume(
+            block,
+            Instruction::branch_conditional(all_eq_id, merge_id, inc_counter_block_id),
+        );
+        block = Block::new(inc_counter_block_id);
+
+        // To simulate a 64-bit counter we always increment the low u32, and increment
+        // the high u32 when the low u32 overflows. ie
+        // counter += vec2(select(0u, 1u, counter.y == u32::MAX), 1u);
+        let low_id = self.gen_id();
+        block.body.push(Instruction::composite_extract(
+            uint_type_id,
+            low_id,
+            load_id,
+            &[1],
+        ));
+        let low_overflow_id = self.gen_id();
+        block.body.push(Instruction::binary(
+            spirv::Op::IEqual,
+            bool_type_id,
+            low_overflow_id,
+            low_id,
+            max_uint_const_id,
+        ));
+        let carry_bit_id = self.gen_id();
+        block.body.push(Instruction::select(
+            uint_type_id,
+            carry_bit_id,
+            low_overflow_id,
+            one_uint_const_id,
+            zero_uint_const_id,
+        ));
+        let increment_id = self.gen_id();
+        block.body.push(Instruction::composite_construct(
+            uint2_type_id,
+            increment_id,
+            &[carry_bit_id, one_uint_const_id],
+        ));
+        let result_id = self.gen_id();
+        block.body.push(Instruction::binary(
+            spirv::Op::IAdd,
+            uint2_type_id,
+            result_id,
+            load_id,
+            increment_id,
+        ));
+        block
+            .body
+            .push(Instruction::store(loop_counter_var_id, result_id, None));
+
+        block
+    }
+
     /// Cache an expression for a value.
     pub(super) fn cache_expression_value(
         &mut self,
@@ -2531,6 +2746,10 @@ impl BlockContext<'_> {
                         continuing_id,
                         spirv::SelectionControl::NONE,
                     ));
+
+                    if let Some(var_id) = self.next_force_loop_bounding_var_id() {
+                        block = self.write_force_bounded_loop_instructions(block, merge_id, var_id);
+                    }
                     self.function.consume(block, Instruction::branch(body_id));
 
                     // We can ignore the `BlockExitDisposition` returned here because,
