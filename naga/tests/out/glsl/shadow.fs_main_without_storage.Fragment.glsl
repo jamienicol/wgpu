@@ -52,8 +52,11 @@ void main() {
     vec3 color_1 = c_ambient;
     uint i_1 = 0u;
     vec3 normal_1 = normalize(in_1.world_normal);
+    uvec2 loop_bound = uvec2(0u);
     bool loop_init = true;
     while(true) {
+        if (all(equal(loop_bound, uvec2(4294967295u)))) { break; }
+        loop_bound += uvec2(loop_bound.y == 4294967295u, 1u);
         if (!loop_init) {
             uint _e40 = i_1;
             i_1 = (_e40 + 1u);

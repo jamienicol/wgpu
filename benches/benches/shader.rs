@@ -323,6 +323,7 @@ fn backends(c: &mut Criterion) {
                 writer_flags: naga::back::glsl::WriterFlags::empty(),
                 binding_map: Default::default(),
                 zero_initialize_workgroup_memory: true,
+                force_loop_bounding: true,
             };
             for input in &inputs.inner {
                 let module = input.module.as_ref().unwrap();

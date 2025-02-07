@@ -590,6 +590,7 @@ pub struct ShaderModule {
     naga: crate::NagaShader,
     label: Option<String>,
     id: ShaderId,
+    runtime_checks: wgt::ShaderRuntimeChecks,
 }
 
 impl crate::DynShaderModule for ShaderModule {}

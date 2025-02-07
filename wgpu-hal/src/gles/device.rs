@@ -251,13 +251,16 @@ impl super::Device {
 
         let mut output = String::new();
         let needs_temp_options = stage.zero_initialize_workgroup_memory
-            != context.layout.naga_options.zero_initialize_workgroup_memory;
+            != context.layout.naga_options.zero_initialize_workgroup_memory
+            || stage.module.runtime_checks.force_loop_bounding
+                != context.layout.naga_options.force_loop_bounding;
         let mut temp_options;
         let naga_options = if needs_temp_options {
             // We use a conditional here, as cloning the naga_options could be expensive
             // That is, we want to avoid doing that unless we cannot avoid it
             temp_options = context.layout.naga_options.clone();
             temp_options.zero_initialize_workgroup_memory = stage.zero_initialize_workgroup_memory;
+            temp_options.force_loop_bounding = stage.module.runtime_checks.force_loop_bounding;
             &temp_options
         } else {
             &context.layout.naga_options
@@ -1219,6 +1222,7 @@ impl crate::Device for super::Device {
                 writer_flags,
                 binding_map,
                 zero_initialize_workgroup_memory: true,
+                force_loop_bounding: true,
             },
         })
     }
@@ -1334,6 +1338,7 @@ impl crate::Device for super::Device {
             },
             label: desc.label.map(|str| str.to_string()),
             id: self.shared.next_shader_id.fetch_add(1, Ordering::Relaxed),
+            runtime_checks: desc.runtime_checks,
         })
     }
 

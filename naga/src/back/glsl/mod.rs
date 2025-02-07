@@ -269,6 +269,9 @@ pub struct Options {
     pub binding_map: BindingMap,
     /// Should workgroup variables be zero initialized (by polyfilling)?
     pub zero_initialize_workgroup_memory: bool,
+    /// If set, loops will have code injected into them, forcing the compiler
+    /// to think the number of iterations is bounded.
+    pub force_loop_bounding: bool,
 }
 
 impl Default for Options {
@@ -278,6 +281,7 @@ impl Default for Options {
             writer_flags: WriterFlags::ADJUST_COORDINATE_SPACE,
             binding_map: BindingMap::default(),
             zero_initialize_workgroup_memory: true,
+            force_loop_bounding: true,
         }
     }
 }
@@ -967,6 +971,33 @@ impl<'a, W: Write> Writer<'a, W> {
 
         // Collect all reflection info and return it to the user
         self.collect_reflection_info()
+    }
+
+    /// Generates statements to be inserted immediately before and at the very
+    /// start of the body of each loop, to defeat infinite loop reasoning.
+    /// The 0th item of the returned tuple should be inserted immediately prior
+    /// to the loop and the 1st item should be inserted at the very start of
+    /// the loop body.
+    ///
+    /// See [`back::msl::Writer::gen_force_bounded_loop_statements`] for details.
+    fn gen_force_bounded_loop_statements(
+        &mut self,
+        level: back::Level,
+    ) -> Option<(String, String)> {
+        if !self.options.force_loop_bounding {
+            return None;
+        }
+
+        let loop_bound_name = self.namer.call("loop_bound");
+        let decl = format!("{level}uvec2 {loop_bound_name} = uvec2(0u);");
+        let level = level.next();
+        let max = u32::MAX;
+        let break_and_inc = format!(
+            "{level}if (all(equal({loop_bound_name}, uvec2({max}u)))) {{ break; }}
+{level}{loop_bound_name} += uvec2({loop_bound_name}.y == {max}u, 1u);"
+        );
+
+        Some((decl, break_and_inc))
     }
 
     fn write_array_size(
@@ -2206,11 +2237,23 @@ impl<'a, W: Write> Writer<'a, W> {
                 ref continuing,
                 break_if,
             } => {
-                self.continue_ctx.enter_loop();
-                if !continuing.is_empty() || break_if.is_some() {
-                    let gate_name = self.namer.call("loop_init");
+                let force_loop_bound_statements = self.gen_force_bounded_loop_statements(level);
+                let gate_name = (!continuing.is_empty() || break_if.is_some())
+                    .then(|| self.namer.call("loop_init"));
+
+                if let Some((ref decl, _)) = force_loop_bound_statements {
+                    writeln!(self.out, "{decl}")?;
+                }
+                if let Some(ref gate_name) = gate_name {
                     writeln!(self.out, "{level}bool {gate_name} = true;")?;
-                    writeln!(self.out, "{level}while(true) {{")?;
+                }
+
+                self.continue_ctx.enter_loop();
+                writeln!(self.out, "{level}while(true) {{")?;
+                if let Some((_, ref break_and_inc)) = force_loop_bound_statements {
+                    writeln!(self.out, "{break_and_inc}")?;
+                }
+                if let Some(gate_name) = gate_name {
                     let l2 = level.next();
                     let l3 = l2.next();
                     writeln!(self.out, "{l2}if (!{gate_name}) {{")?;
@@ -2226,9 +2269,8 @@ impl<'a, W: Write> Writer<'a, W> {
                     }
                     writeln!(self.out, "{l2}}}")?;
                     writeln!(self.out, "{}{} = false;", level.next(), gate_name)?;
-                } else {
-                    writeln!(self.out, "{level}while(true) {{")?;
                 }
+
                 for sta in body {
                     self.write_stmt(sta, ctx, level.next())?;
                 }

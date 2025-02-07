@@ -51,8 +51,11 @@ void main() {
     vPos = _e8;
     vec2 _e14 = _group_0_binding_1_cs.particles[index].vel;
     vVel = _e14;
+    uvec2 loop_bound = uvec2(0u);
     bool loop_init = true;
     while(true) {
+        if (all(equal(loop_bound, uvec2(4294967295u)))) { break; }
+        loop_bound += uvec2(loop_bound.y == 4294967295u, 1u);
         if (!loop_init) {
             uint _e91 = i;
             i = (_e91 + 1u);

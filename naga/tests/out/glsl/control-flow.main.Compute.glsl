@@ -25,7 +25,10 @@ void switch_case_break() {
 }
 
 void loop_switch_continue(int x) {
+    uvec2 loop_bound = uvec2(0u);
     while(true) {
+        if (all(equal(loop_bound, uvec2(4294967295u)))) { break; }
+        loop_bound += uvec2(loop_bound.y == 4294967295u, 1u);
         switch(x) {
             case 1: {
                 continue;
@@ -39,7 +42,10 @@ void loop_switch_continue(int x) {
 }
 
 void loop_switch_continue_nesting(int x_1, int y, int z) {
+    uvec2 loop_bound_1 = uvec2(0u);
     while(true) {
+        if (all(equal(loop_bound_1, uvec2(4294967295u)))) { break; }
+        loop_bound_1 += uvec2(loop_bound_1.y == 4294967295u, 1u);
         switch(x_1) {
             case 1: {
                 continue;
@@ -50,7 +56,10 @@ void loop_switch_continue_nesting(int x_1, int y, int z) {
                         continue;
                     }
                     default: {
+                        uvec2 loop_bound_2 = uvec2(0u);
                         while(true) {
+                            if (all(equal(loop_bound_2, uvec2(4294967295u)))) { break; }
+                            loop_bound_2 += uvec2(loop_bound_2.y == 4294967295u, 1u);
                             switch(z) {
                                 case 1: {
                                     continue;
@@ -78,7 +87,10 @@ void loop_switch_continue_nesting(int x_1, int y, int z) {
             continue;
         }
     }
+    uvec2 loop_bound_3 = uvec2(0u);
     while(true) {
+        if (all(equal(loop_bound_3, uvec2(4294967295u)))) { break; }
+        loop_bound_3 += uvec2(loop_bound_3.y == 4294967295u, 1u);
         bool should_continue_1 = false;
         do {
             do {
@@ -98,7 +110,10 @@ void loop_switch_continue_nesting(int x_1, int y, int z) {
 
 void loop_switch_omit_continue_variable_checks(int x_2, int y_1, int z_1, int w) {
     int pos_1 = 0;
+    uvec2 loop_bound_4 = uvec2(0u);
     while(true) {
+        if (all(equal(loop_bound_4, uvec2(4294967295u)))) { break; }
+        loop_bound_4 += uvec2(loop_bound_4.y == 4294967295u, 1u);
         switch(x_2) {
             case 1: {
                 pos_1 = 1;
@@ -109,7 +124,10 @@ void loop_switch_omit_continue_variable_checks(int x_2, int y_1, int z_1, int w)
             }
         }
     }
+    uvec2 loop_bound_5 = uvec2(0u);
     while(true) {
+        if (all(equal(loop_bound_5, uvec2(4294967295u)))) { break; }
+        loop_bound_5 += uvec2(loop_bound_5.y == 4294967295u, 1u);
         switch(x_2) {
             case 1: {
                 break;
