@@ -148,7 +148,7 @@ impl ExpressionTracer<'_> {
                 depth_ref,
             } => {
                 self.expressions_used
-                    .insert_iter([image, sampler, coordinate]);
+                    .insert_iter([image, sampler, coordinate.expr]);
                 self.expressions_used.insert_iter(array_index);
                 self.expressions_used.insert_iter(offset);
                 use crate::SampleLevel as Sl;
@@ -319,7 +319,7 @@ impl ModuleMap {
             } => {
                 adjust(image);
                 adjust(sampler);
-                adjust(coordinate);
+                adjust(&mut coordinate.expr);
                 operand_map.adjust_option(array_index);
                 operand_map.adjust_option(offset);
                 self.adjust_sample_level(level, operand_map);

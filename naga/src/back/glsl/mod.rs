@@ -3059,9 +3059,11 @@ impl<'a, W: Write> Writer<'a, W> {
                 // The space here isn't required but it helps with readability
                 write!(self.out, ", ")?;
 
+                // TODO: handle coordinate.clamp_to_edge
+
                 // We need to get the coordinates vector size to later build a vector that's `size + 1`
                 // if `depth_ref` is some, if it isn't a vector we panic as that's not a valid expression
-                let mut coord_dim = match *ctx.resolve_type(coordinate, &self.module.types) {
+                let mut coord_dim = match *ctx.resolve_type(coordinate.expr, &self.module.types) {
                     TypeInner::Vector { size, .. } => size as u8,
                     TypeInner::Scalar { .. } => 1,
                     _ => unreachable!(),
@@ -3081,7 +3083,7 @@ impl<'a, W: Write> Writer<'a, W> {
                 if is_vec {
                     write!(self.out, "vec{}(", coord_dim + tex_1d_hack as u8)?;
                 }
-                self.write_expr(coordinate, ctx)?;
+                self.write_expr(coordinate.expr, ctx)?;
                 if tex_1d_hack {
                     write!(self.out, ", 0.0")?;
                 }

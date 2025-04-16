@@ -602,7 +602,7 @@ fn write_function_expressions(
             } => {
                 edges.insert("image", image);
                 edges.insert("sampler", sampler);
-                edges.insert("coordinate", coordinate);
+                edges.insert("coordinate", coordinate.expr);
                 if let Some(expr) = array_index {
                     edges.insert("array_index", expr);
                 }

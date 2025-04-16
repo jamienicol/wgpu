@@ -511,7 +511,10 @@
                     image: 1,
                     sampler: 0,
                     gather: None,
-                    coordinate: 31,
+                    coordinate: (
+                        expr: 31,
+                        clamp_to_edge: false,
+                    ),
                     array_index: Some(33),
                     offset: None,
                     level: Zero,

@@ -749,7 +749,10 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             image: si_lexp.image,
             sampler: si_lexp.sampler,
             gather: None, //TODO
-            coordinate,
+            coordinate: crate::SampleCoordinate {
+                expr: coordinate,
+                clamp_to_edge: false,
+            },
             array_index,
             offset,
             level,

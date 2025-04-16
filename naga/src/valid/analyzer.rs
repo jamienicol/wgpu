@@ -693,7 +693,7 @@ impl FunctionInfo {
                     non_uniform_result: self
                         .add_ref(image)
                         .or(self.add_ref(sampler))
-                        .or(self.add_ref(coordinate))
+                        .or(self.add_ref(coordinate.expr))
                         .or(array_nur)
                         .or(level_nur)
                         .or(dref_nur)

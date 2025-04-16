@@ -446,7 +446,7 @@ impl super::Validator {
                 handle
                     .check_dep(image)?
                     .check_dep(sampler)?
-                    .check_dep(coordinate)?
+                    .check_dep(coordinate.expr)?
                     .check_dep_opt(array_index)?
                     .check_dep_opt(offset)?;
 

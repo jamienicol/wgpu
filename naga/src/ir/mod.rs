@@ -1223,6 +1223,19 @@ pub enum MathFunction {
     Unpack4xU8,
 }
 
+/// Coordinate of an [`Expression::ImageSample`] expression.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct SampleCoordinate {
+    /// The texture coordinates used for sampling.
+    pub expr: Handle<Expression>,
+    /// Whether the result of `expr` must be clamped to the edge of the
+    /// rectangle `[half_texel, 1 - half_texel]` prior to sampling.
+    pub clamp_to_edge: bool,
+}
+
 /// Sampling modifier to control the level of detail.
 ///
 /// All `Handle<Expression>` values here refer to an expression in
@@ -1503,7 +1516,7 @@ pub enum Expression {
         /// If Some(), this operation is a gather operation
         /// on the selected component.
         gather: Option<SwizzleComponent>,
-        coordinate: Handle<Expression>,
+        coordinate: SampleCoordinate,
         array_index: Option<Handle<Expression>>,
         /// This must be a const-expression.
         offset: Option<Handle<Expression>>,

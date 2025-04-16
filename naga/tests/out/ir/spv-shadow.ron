@@ -766,7 +766,10 @@
                     image: 5,
                     sampler: 3,
                     gather: None,
-                    coordinate: 67,
+                    coordinate: (
+                        expr: 67,
+                        clamp_to_edge: false,
+                    ),
                     array_index: Some(69),
                     offset: None,
                     level: Zero,

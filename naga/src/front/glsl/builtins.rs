@@ -2078,7 +2078,10 @@ fn texture_call(
                 image,
                 sampler,
                 gather: None, //TODO
-                coordinate: comps.coordinate,
+                coordinate: crate::SampleCoordinate {
+                    expr: comps.coordinate,
+                    clamp_to_edge: false,
+                },
                 array_index,
                 offset,
                 level,

@@ -1321,6 +1321,7 @@ impl<W: Write> Writer<W> {
                 };
                 let suffix_level = match level {
                     Sl::Auto => "",
+                    Sl::Zero if coordinate.clamp_to_edge => "BaseClampToEdge",
                     Sl::Zero | Sl::Exact(_) => "Level",
                     Sl::Bias(_) => "Bias",
                     Sl::Gradient { .. } => "Grad",
@@ -1331,7 +1332,7 @@ impl<W: Write> Writer<W> {
                 write!(self.out, ", ")?;
                 self.write_expr(module, sampler, func_ctx)?;
                 write!(self.out, ", ")?;
-                self.write_expr(module, coordinate, func_ctx)?;
+                self.write_expr(module, coordinate.expr, func_ctx)?;
 
                 if let Some(array_index) = array_index {
                     write!(self.out, ", ")?;
@@ -1346,8 +1347,8 @@ impl<W: Write> Writer<W> {
                 match level {
                     Sl::Auto => {}
                     Sl::Zero => {
-                        // Level 0 is implied for depth comparison
-                        if depth_ref.is_none() {
+                        // Level 0 is implied for depth comparison and BaseClampToEdge
+                        if depth_ref.is_none() && !coordinate.clamp_to_edge {
                             write!(self.out, ", 0.0")?;
                         }
                     }
@@ -1404,7 +1405,7 @@ impl<W: Write> Writer<W> {
                 write!(self.out, ", ")?;
                 self.write_expr(module, sampler, func_ctx)?;
                 write!(self.out, ", ")?;
-                self.write_expr(module, coordinate, func_ctx)?;
+                self.write_expr(module, coordinate.expr, func_ctx)?;
 
                 if let Some(array_index) = array_index {
                     write!(self.out, ", ")?;
