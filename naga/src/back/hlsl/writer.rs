@@ -42,6 +42,8 @@ pub(crate) const F2I32_FUNCTION: &str = "naga_f2i32";
 pub(crate) const F2U32_FUNCTION: &str = "naga_f2u32";
 pub(crate) const F2I64_FUNCTION: &str = "naga_f2i64";
 pub(crate) const F2U64_FUNCTION: &str = "naga_f2u64";
+pub(crate) const IMAGE_SAMPLE_BASE_CLAMP_TO_EDGE_FUNCTION: &str =
+    "nagaTextureSampleBaseClampToEdge";
 
 struct EpStructMember {
     name: String,
@@ -3181,6 +3183,21 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                 write!(self.out, "{name}")?;
             }
             Expression::ImageSample {
+                coordinate,
+                image,
+                sampler,
+                clamp_to_edge: true,
+                ..
+            } => {
+                write!(self.out, "{IMAGE_SAMPLE_BASE_CLAMP_TO_EDGE_FUNCTION}(")?;
+                self.write_expr(module, image, func_ctx)?;
+                write!(self.out, ", ")?;
+                self.write_expr(module, sampler, func_ctx)?;
+                write!(self.out, ", ")?;
+                self.write_expr(module, coordinate, func_ctx)?;
+                write!(self.out, ")")?;
+            }
+            Expression::ImageSample {
                 image,
                 sampler,
                 gather,
@@ -3189,6 +3206,7 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                 offset,
                 level,
                 depth_ref,
+                clamp_to_edge: _,
             } => {
                 use crate::SampleLevel as Sl;
                 const COMPONENTS: [&str; 4] = ["", "Green", "Blue", "Alpha"];

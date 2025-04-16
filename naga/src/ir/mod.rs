@@ -1509,6 +1509,9 @@ pub enum Expression {
         offset: Option<Handle<Expression>>,
         level: SampleLevel,
         depth_ref: Option<Handle<Expression>>,
+        /// Whether the value of `coordinate` must be clamped to the edge of
+        /// the rectangle `[half_texel, 1 - half_texel]` prior to sampling.
+        clamp_to_edge: bool,
     },
 
     /// Load a texel from an image.
