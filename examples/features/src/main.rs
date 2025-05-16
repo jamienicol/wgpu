@@ -39,6 +39,12 @@ const EXAMPLES: &[ExampleDesc] = &[
         webgpu: true,
     },
     ExampleDesc {
+        name: "external_texture",
+        function: wgpu_examples::external_texture::main,
+        webgl: false,
+        webgpu: false,
+    },
+    ExampleDesc {
         name: "hello_synchronization",
         function: wgpu_examples::hello_synchronization::main,
         webgl: false, // No canvas for WebGL
