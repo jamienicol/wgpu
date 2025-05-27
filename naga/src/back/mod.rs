@@ -369,3 +369,10 @@ pub enum RayIntersectionType {
     Triangle = 1,
     BoundingBox = 4,
 }
+
+/// Pipeline binding information for global resources.
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ExternalTextureResources<T> {
+    pub planes: [T; 3],
+    pub params: T,
+}

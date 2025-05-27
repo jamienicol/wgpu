@@ -779,7 +779,10 @@ pub fn map_binding_type(ty: wgt::BindingType) -> vk::DescriptorType {
         wgt::BindingType::AccelerationStructure { .. } => {
             vk::DescriptorType::ACCELERATION_STRUCTURE_KHR
         }
-        wgt::BindingType::ExternalTexture => unimplemented!(),
+        // wgt::BindingType::ExternalTexture => vk::DescriptorType::SAMPLED_IMAGE,
+        wgt::BindingType::ExternalTexture => {
+            unreachable!("External textures must be handled separately")
+        }
     }
 }
 

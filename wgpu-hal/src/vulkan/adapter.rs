@@ -126,6 +126,9 @@ pub struct PhysicalDeviceFeatures {
     /// Features provided by `VK_KHR_shader_integer_dot_product`, promoted to Vulkan 1.3.
     shader_integer_dot_product:
         Option<vk::PhysicalDeviceShaderIntegerDotProductFeaturesKHR<'static>>,
+
+    uniform_buffer_standard_layout:
+        Option<vk::PhysicalDeviceUniformBufferStandardLayoutFeatures<'static>>,
 }
 
 impl PhysicalDeviceFeatures {
@@ -193,6 +196,9 @@ impl PhysicalDeviceFeatures {
             info = info.push_next(feature);
         }
         if let Some(ref mut feature) = self.shader_integer_dot_product {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.uniform_buffer_standard_layout {
             info = info.push_next(feature);
         }
         info
@@ -524,6 +530,11 @@ impl PhysicalDeviceFeatures {
             } else {
                 None
             },
+            // FIXME: make optional? but how do we align Nx2 matrices correctly without this?
+            uniform_buffer_standard_layout: Some(
+                vk::PhysicalDeviceUniformBufferStandardLayoutFeatures::default()
+                    .uniform_buffer_standard_layout(true),
+            ),
         }
     }
 
@@ -555,7 +566,8 @@ impl PhysicalDeviceFeatures {
             | F::CLEAR_TEXTURE
             | F::PIPELINE_CACHE
             | F::SHADER_EARLY_DEPTH_TEST
-            | F::TEXTURE_ATOMIC;
+            | F::TEXTURE_ATOMIC
+            | F::EXTERNAL_TEXTURE;
 
         let mut dl_flags = Df::COMPUTE_SHADERS
             | Df::BASE_VERTEX

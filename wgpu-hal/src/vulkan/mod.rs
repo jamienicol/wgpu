@@ -1004,9 +1004,14 @@ impl crate::DynSampler for Sampler {}
 pub struct BindGroupLayout {
     raw: vk::DescriptorSetLayout,
     desc_count: gpu_descriptor::DescriptorTotalCount,
-    types: Box<[(vk::DescriptorType, u32)]>,
+    /// Sorted list of entries.
+    entries: Vec<wgt::BindGroupLayoutEntry>,
     /// Map of binding index to size,
     binding_arrays: Vec<(u32, NonZeroU32)>,
+    /// Map of original binding index to remapped binding index
+    binding_map: FastHashMap<u32, u32>,
+    /// Map of original binding index to multiple binding indices for external textures
+    external_texture_binding_map: FastHashMap<u32, naga::back::ExternalTextureResources<u32>>,
 }
 
 impl crate::DynBindGroupLayout for BindGroupLayout {}
@@ -1014,7 +1019,7 @@ impl crate::DynBindGroupLayout for BindGroupLayout {}
 #[derive(Debug)]
 pub struct PipelineLayout {
     raw: vk::PipelineLayout,
-    binding_arrays: naga::back::spv::BindingMap,
+    binding_map: naga::back::spv::BindingMap,
 }
 
 impl crate::DynPipelineLayout for PipelineLayout {}
