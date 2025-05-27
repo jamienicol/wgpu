@@ -276,7 +276,12 @@ impl LocalImageType {
                 flags: make_flags(false, ImageTypeFlags::empty()),
                 image_format: format.into(),
             },
-            crate::ImageClass::External => unimplemented!(),
+            crate::ImageClass::External => LocalImageType {
+                sampled_type: crate::Scalar::F32,
+                dim,
+                flags: make_flags(false, ImageTypeFlags::SAMPLED),
+                image_format: spirv::ImageFormat::Unknown,
+            },
         }
     }
 }
@@ -459,6 +464,13 @@ enum WrappedFunction {
         op: crate::BinaryOperator,
         left_type_id: Word,
         right_type_id: Word,
+    },
+    ImageLoad {
+        class: crate::ImageClass,
+        coord_scalar: crate::Scalar,
+    },
+    ImageSample {
+        class: crate::ImageClass,
     },
 }
 
@@ -720,6 +732,14 @@ impl BlockContext<'_> {
     }
 }
 
+#[derive(Clone)]
+struct GlobalExternalTextureVariable {
+    plane0: GlobalVariable,
+    plane1: GlobalVariable,
+    plane2: GlobalVariable,
+    params: GlobalVariable,
+}
+
 pub struct Writer {
     physical_layout: PhysicalLayout,
     logical_layout: LogicalLayout,
@@ -758,6 +778,8 @@ pub struct Writer {
     constant_ids: HandleVec<crate::Expression, Word>,
     cached_constants: crate::FastHashMap<CachedConstant, Word>,
     global_variables: HandleVec<crate::GlobalVariable, GlobalVariable>,
+    global_external_texture_variables:
+        crate::FastHashMap<Handle<crate::GlobalVariable>, GlobalExternalTextureVariable>,
     binding_map: BindingMap,
 
     // Cached expressions are only meaningful within a BlockContext, but we
@@ -805,10 +827,22 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
+#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+pub enum BindingTarget {
+    Single(crate::ResourceBinding),
+    ExternalTexture {
+        planes: [crate::ResourceBinding; 3],
+        params: crate::ResourceBinding,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 pub struct BindingInfo {
+    pub target: BindingTarget,
     /// If the binding is an unsized binding array, this overrides the size.
     pub binding_array_size: Option<u32>,
 }

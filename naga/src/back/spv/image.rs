@@ -118,7 +118,10 @@ impl Load {
             crate::ImageClass::Depth { .. } | crate::ImageClass::Sampled { .. } => {
                 spirv::Op::ImageFetch
             }
-            crate::ImageClass::External => unimplemented!(),
+            // FIXME: imagefetch or unreachable??
+            // crate::ImageClass::External => spirv::Op::ImageFetch,
+            // FIXME: explain why unreachable
+            crate::ImageClass::External => unreachable!(),
         };
 
         // `OpImageRead` and `OpImageFetch` instructions produce vec4<f32>
@@ -375,6 +378,10 @@ impl BlockContext<'_> {
     pub(super) fn get_handle_id(&mut self, expr_handle: Handle<crate::Expression>) -> Word {
         let id = match self.ir_function.expressions[expr_handle] {
             crate::Expression::GlobalVariable(handle) => {
+                assert!(!self
+                    .writer
+                    .global_external_texture_variables
+                    .contains_key(&handle));
                 self.writer.global_variables[handle].handle_id
             }
             crate::Expression::FunctionArgument(i) => {
@@ -1122,7 +1129,26 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use crate::{ImageClass as Ic, ImageDimension as Id, ImageQuery as Iq};
 
-        let image_id = self.get_handle_id(image);
+        let image_id = match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
+            // For external images just perform the query on plane 0.
+            // If we ever need to support passing the texture size in the
+            // params uniform buffer then this will need changed.
+            crate::TypeInner::Image {
+                class: crate::ImageClass::External,
+                ..
+            } => match self.ir_function.expressions[image] {
+                crate::Expression::GlobalVariable(handle) => {
+                    self.writer.global_external_texture_variables[&handle]
+                        .plane0
+                        .handle_id
+                }
+                crate::Expression::FunctionArgument(_i) => {
+                    todo!()
+                }
+                _ => unreachable!("Unexpected expression type for external texture"),
+            },
+            _ => self.get_handle_id(image),
+        };
         let image_type = self.fun_info[image].ty.handle().unwrap();
         let (dim, arrayed, class) = match self.ir_module.types[image_type].inner {
             crate::TypeInner::Image {

@@ -1643,15 +1643,59 @@ impl BlockContext<'_> {
                 array_index,
                 sample,
                 level,
-            } => self.write_image_load(
-                result_type_id,
-                image,
-                coordinate,
-                array_index,
-                level,
-                sample,
-                block,
-            )?,
+            } => match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
+                crate::TypeInner::Image {
+                    class: class @ crate::ImageClass::External,
+                    ..
+                } => {
+                    let id = self.gen_id();
+                    let ext_tex = match self.ir_function.expressions[image] {
+                        crate::Expression::GlobalVariable(global) => {
+                            self.writer.global_external_texture_variables[&global].clone()
+                        }
+                        crate::Expression::FunctionArgument(_index) => todo!(),
+                        _ => {
+                            return Err(Error::Validation("Unexpected expression for image"));
+                        }
+                    };
+                    let crate::TypeInner::Vector {
+                        size: crate::VectorSize::Bi,
+                        scalar: coord_scalar,
+                    } = *self.fun_info[coordinate]
+                        .ty
+                        .inner_with(&self.ir_module.types)
+                    else {
+                        unreachable!("coordinate must be a vector of size 2");
+                    };
+
+                    let function_id = self.writer.wrapped_functions[&WrappedFunction::ImageLoad {
+                        class,
+                        coord_scalar,
+                    }];
+                    block.body.push(Instruction::function_call(
+                        result_type_id,
+                        id,
+                        function_id,
+                        &[
+                            ext_tex.plane0.handle_id,
+                            ext_tex.plane1.handle_id,
+                            ext_tex.plane2.handle_id,
+                            ext_tex.params.handle_id,
+                            self.cached[coordinate],
+                        ],
+                    ));
+                    id
+                }
+                _ => self.write_image_load(
+                    result_type_id,
+                    image,
+                    coordinate,
+                    array_index,
+                    level,
+                    sample,
+                    block,
+                )?,
+            },
             crate::Expression::ImageSample {
                 image,
                 sampler,
@@ -1662,19 +1706,53 @@ impl BlockContext<'_> {
                 level,
                 depth_ref,
                 clamp_to_edge,
-            } => self.write_image_sample(
-                result_type_id,
-                image,
-                sampler,
-                gather,
-                coordinate,
-                array_index,
-                offset,
-                level,
-                depth_ref,
-                clamp_to_edge,
-                block,
-            )?,
+            } => match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
+                crate::TypeInner::Image {
+                    class: class @ crate::ImageClass::External,
+                    ..
+                } => {
+                    let id = self.gen_id();
+                    let ext_tex = match self.ir_function.expressions[image] {
+                        crate::Expression::GlobalVariable(global) => {
+                            self.writer.global_external_texture_variables[&global].clone()
+                        }
+                        crate::Expression::FunctionArgument(_index) => todo!(),
+                        _ => {
+                            return Err(Error::Validation("Unexpected expression for image"));
+                        }
+                    };
+
+                    let function_id =
+                        self.writer.wrapped_functions[&WrappedFunction::ImageSample { class }];
+                    block.body.push(Instruction::function_call(
+                        result_type_id,
+                        id,
+                        function_id,
+                        &[
+                            ext_tex.plane0.handle_id,
+                            ext_tex.plane1.handle_id,
+                            ext_tex.plane2.handle_id,
+                            ext_tex.params.handle_id,
+                            self.get_handle_id(sampler),
+                            self.cached[coordinate],
+                        ],
+                    ));
+                    id
+                }
+                _ => self.write_image_sample(
+                    result_type_id,
+                    image,
+                    sampler,
+                    gather,
+                    coordinate,
+                    array_index,
+                    offset,
+                    level,
+                    depth_ref,
+                    clamp_to_edge,
+                    block,
+                )?,
+            },
             crate::Expression::Select {
                 condition,
                 accept,

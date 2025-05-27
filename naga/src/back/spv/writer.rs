@@ -1,4 +1,4 @@
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{format, string::String, vec, vec::Vec};
 
 use hashbrown::hash_map::Entry;
 use spirv::Word;
@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     arena::{Handle, HandleVec, UniqueArena},
-    back::spv::{BindingInfo, WrappedFunction},
+    back::spv::{BindingInfo, BindingTarget, GlobalExternalTextureVariable, WrappedFunction},
     path_like::PathLike,
     proc::{Alignment, TypeResolution},
     valid::{FunctionInfo, ModuleInfo},
@@ -86,6 +86,7 @@ impl Writer {
             constant_ids: HandleVec::new(),
             cached_constants: crate::FastHashMap::default(),
             global_variables: HandleVec::new(),
+            global_external_texture_variables: crate::FastHashMap::default(),
             binding_map: options.binding_map.clone(),
             saved_cached: CachedExpressions::default(),
             gl450_ext_inst_id,
@@ -147,6 +148,8 @@ impl Writer {
             constant_ids: take(&mut self.constant_ids).recycle(),
             cached_constants: take(&mut self.cached_constants).recycle(),
             global_variables: take(&mut self.global_variables).recycle(),
+            global_external_texture_variables: take(&mut self.global_external_texture_variables)
+                .recycle(),
             saved_cached: take(&mut self.saved_cached).recycle(),
             temp_list: take(&mut self.temp_list).recycle(),
             ray_get_candidate_intersection_function: None,
@@ -349,6 +352,13 @@ impl Writer {
         })
     }
 
+    pub(super) fn get_vec4f_type_id(&mut self) -> Word {
+        self.get_numeric_type_id(NumericType::Vector {
+            size: crate::VectorSize::Quad,
+            scalar: crate::Scalar::F32,
+        })
+    }
+
     pub(super) fn get_f32_pointer_type_id(&mut self, class: spirv::StorageClass) -> Word {
         let f32_id = self.get_f32_type_id();
         self.get_pointer_type_id(f32_id, class)
@@ -479,6 +489,35 @@ impl Writer {
                             }
                             _ => {}
                         }
+                    }
+                }
+                crate::Expression::ImageLoad {
+                    image, coordinate, ..
+                } => {
+                    let image_ty_inner = info[image].ty.inner_with(&ir_module.types);
+                    if let crate::TypeInner::Image {
+                        class: class @ crate::ImageClass::External,
+                        ..
+                    } = *image_ty_inner
+                    {
+                        let crate::TypeInner::Vector {
+                            size: crate::VectorSize::Bi,
+                            scalar: coord_scalar,
+                        } = *info[coordinate].ty.inner_with(&ir_module.types)
+                        else {
+                            unreachable!("coordinate type must be a vector of size 2");
+                        };
+                        self.write_wrapped_image_load(ir_module, class, coord_scalar)?;
+                    }
+                }
+                crate::Expression::ImageSample { image, .. } => {
+                    let image_ty_inner = info[image].ty.inner_with(&ir_module.types);
+                    if let crate::TypeInner::Image {
+                        class: class @ crate::ImageClass::External,
+                        ..
+                    } = *image_ty_inner
+                    {
+                        self.write_wrapped_image_sample(ir_module, class)?;
                     }
                 }
                 _ => {}
@@ -678,6 +717,728 @@ impl Writer {
 
         function.consume(block, Instruction::return_value(return_id));
         function.to_words(&mut self.logical_layout.function_definitions);
+        Ok(())
+    }
+
+    fn write_wrapped_image_load(
+        &mut self,
+        ir_module: &crate::Module,
+        class: crate::ImageClass,
+        coord_scalar: crate::Scalar,
+    ) -> Result<(), Error> {
+        // Check if we've already emitted this function.
+        let wrapped = WrappedFunction::ImageLoad {
+            class,
+            coord_scalar,
+        };
+        let function_id = match self.wrapped_functions.entry(wrapped) {
+            Entry::Occupied(_) => return Ok(()),
+            Entry::Vacant(e) => *e.insert(self.id_gen.next()),
+        };
+
+        if class == crate::ImageClass::External {
+            if self.flags.contains(WriterFlags::DEBUG) {
+                self.debugs
+                    .push(Instruction::name(function_id, "nagaTextureLoadExternal"));
+            }
+            let mut function = Function::default();
+
+            let image_type_id = self.get_localtype_id(LocalType::Image(LocalImageType {
+                sampled_type: crate::Scalar::F32,
+                dim: spirv::Dim::Dim2D,
+                flags: super::ImageTypeFlags::SAMPLED,
+                image_format: spirv::ImageFormat::Unknown,
+            }));
+            let params_type_id =
+                self.get_handle_type_id(ir_module.special_types.external_texture_params.unwrap());
+            let vec2f_type_id = self.get_vec2f_type_id();
+            let vec4f_type_id = self.get_vec4f_type_id();
+            let mat4x4f_type_id = self.get_localtype_id(LocalType::Numeric(NumericType::Matrix {
+                columns: crate::VectorSize::Quad,
+                rows: crate::VectorSize::Quad,
+                scalar: crate::Scalar::F32,
+            }));
+
+            let coord_type_id =
+                self.get_type_id(LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                    size: crate::VectorSize::Bi,
+                    scalar: coord_scalar,
+                })));
+
+            let function_type_id = self.get_function_type(LookupFunctionType {
+                parameter_type_ids: vec![
+                    image_type_id,
+                    image_type_id,
+                    image_type_id,
+                    params_type_id,
+                    coord_type_id,
+                ],
+                return_type_id: vec4f_type_id,
+            });
+            function.signature = Some(Instruction::function(
+                vec4f_type_id,
+                function_id,
+                spirv::FunctionControl::empty(),
+                function_type_id,
+            ));
+
+            let plane0_id = self.id_gen.next();
+            let plane1_id = self.id_gen.next();
+            let plane2_id = self.id_gen.next();
+            let params_id = self.id_gen.next();
+            let coords_id = self.id_gen.next();
+
+            if self.flags.contains(WriterFlags::DEBUG) {
+                self.debugs.push(Instruction::name(plane0_id, "plane0"));
+                self.debugs.push(Instruction::name(plane1_id, "plane1"));
+                self.debugs.push(Instruction::name(plane2_id, "plane2"));
+                self.debugs.push(Instruction::name(params_id, "params"));
+                self.debugs.push(Instruction::name(coords_id, "coords"));
+            }
+
+            let plane0_par = Instruction::function_parameter(image_type_id, plane0_id);
+            let plane1_par = Instruction::function_parameter(image_type_id, plane1_id);
+            let plane2_par = Instruction::function_parameter(image_type_id, plane2_id);
+            let params_par = Instruction::function_parameter(params_type_id, params_id);
+            let coords_par = Instruction::function_parameter(coord_type_id, coords_id);
+            for instruction in [plane0_par, plane1_par, plane2_par, params_par, coords_par] {
+                function.parameters.push(FunctionArgument {
+                    instruction,
+                    handle_id: 0, // FIXME: need to generate a handle id?
+                });
+            }
+
+            let u32_type_id = self.get_u32_type_id();
+            let const_one_u32_id = self.get_constant_scalar(crate::Literal::U32(1));
+            let const_two_u32_id = self.get_constant_scalar(crate::Literal::U32(2));
+            let bool_type_id = self.get_bool_type_id();
+            let const_one_f32_id = self.get_constant_scalar(crate::Literal::F32(1.0));
+            let f32_type_id = self.get_f32_type_id();
+
+            let block_id = self.id_gen.next();
+            let mut block = Block::new(block_id);
+            let num_planes_id = self.id_gen.next();
+            block.body.push(Instruction::composite_extract(
+                u32_type_id,
+                num_planes_id,
+                params_id,
+                &[4],
+            ));
+            let num_planes_eq_one_id = self.id_gen.next();
+            block.body.push(Instruction::binary(
+                spirv::Op::IEqual,
+                bool_type_id,
+                num_planes_eq_one_id,
+                num_planes_id,
+                const_one_u32_id,
+            ));
+
+            let single_plane_block_id = self.id_gen.next();
+            let multi_plane_pre_block_id = self.id_gen.next();
+            let multi_plane_post_block_id = self.id_gen.next();
+            let return_block_id = self.id_gen.next();
+            block.body.push(Instruction::selection_merge(
+                return_block_id,
+                spirv::SelectionControl::empty(),
+            ));
+            function.consume(
+                block,
+                Instruction::branch_conditional(
+                    num_planes_eq_one_id,
+                    single_plane_block_id,
+                    multi_plane_pre_block_id,
+                ),
+            );
+
+            let single_plane_rgba = {
+                let mut single_plane_block = Block::new(single_plane_block_id);
+
+                let plane0_fetch_id = self.id_gen.next();
+                single_plane_block
+                    .body
+                    .push(Instruction::image_fetch_or_read(
+                        spirv::Op::ImageFetch,
+                        vec4f_type_id,
+                        plane0_fetch_id,
+                        plane0_id,
+                        coords_id,
+                    ));
+                function.consume(single_plane_block, Instruction::branch(return_block_id));
+                plane0_fetch_id
+            };
+
+            let multi_plane_rgba_id = {
+                let mut multi_plane_pre_block = Block::new(multi_plane_pre_block_id);
+
+                let plane0_fetch_id = self.id_gen.next();
+                multi_plane_pre_block
+                    .body
+                    .push(Instruction::image_fetch_or_read(
+                        spirv::Op::ImageFetch,
+                        vec4f_type_id,
+                        plane0_fetch_id,
+                        plane0_id,
+                        coords_id,
+                    ));
+                let y_val_id = self.id_gen.next();
+                multi_plane_pre_block
+                    .body
+                    .push(Instruction::composite_extract(
+                        f32_type_id,
+                        y_val_id,
+                        plane0_fetch_id,
+                        &[0],
+                    ));
+
+                let num_planes_eq_two_id = self.id_gen.next();
+                multi_plane_pre_block.body.push(Instruction::binary(
+                    spirv::Op::IEqual,
+                    bool_type_id,
+                    num_planes_eq_two_id,
+                    num_planes_id,
+                    const_two_u32_id,
+                ));
+                let two_planes_block_id = self.id_gen.next();
+                let three_planes_block_id = self.id_gen.next();
+                multi_plane_pre_block
+                    .body
+                    .push(Instruction::selection_merge(
+                        multi_plane_post_block_id,
+                        spirv::SelectionControl::empty(),
+                    ));
+                function.consume(
+                    multi_plane_pre_block,
+                    Instruction::branch_conditional(
+                        num_planes_eq_two_id,
+                        two_planes_block_id,
+                        three_planes_block_id,
+                    ),
+                );
+
+                // TWO PLANES
+                let two_planes_uv_vals_id = {
+                    let mut two_planes_block = Block::new(two_planes_block_id);
+                    let plane1_fetch_id = self.id_gen.next();
+                    two_planes_block.body.push(Instruction::image_fetch_or_read(
+                        spirv::Op::ImageFetch,
+                        vec4f_type_id,
+                        plane1_fetch_id,
+                        plane1_id,
+                        coords_id,
+                    ));
+                    let vec2f_type_id = self.get_vec2f_type_id();
+                    let two_planes_uv_vals_id = self.id_gen.next();
+                    two_planes_block.body.push(Instruction::vector_shuffle(
+                        vec2f_type_id,
+                        two_planes_uv_vals_id,
+                        plane1_fetch_id,
+                        plane1_fetch_id,
+                        &[0, 1],
+                    ));
+
+                    function.consume(
+                        two_planes_block,
+                        Instruction::branch(multi_plane_post_block_id),
+                    );
+                    two_planes_uv_vals_id
+                };
+
+                // THREE PLANES
+                let three_planes_uv_vals_id = {
+                    let mut three_planes_block = Block::new(three_planes_block_id);
+
+                    let plane1_fetch_id = self.id_gen.next();
+                    three_planes_block
+                        .body
+                        .push(Instruction::image_fetch_or_read(
+                            spirv::Op::ImageFetch,
+                            vec4f_type_id,
+                            plane1_fetch_id,
+                            plane1_id,
+                            coords_id,
+                        ));
+                    let plane1_extract_id = self.id_gen.next();
+                    three_planes_block.body.push(Instruction::composite_extract(
+                        f32_type_id,
+                        plane1_extract_id,
+                        plane1_fetch_id,
+                        &[0],
+                    ));
+                    let plane2_fetch_id = self.id_gen.next();
+                    three_planes_block
+                        .body
+                        .push(Instruction::image_fetch_or_read(
+                            spirv::Op::ImageFetch,
+                            vec4f_type_id,
+                            plane2_fetch_id,
+                            plane2_id,
+                            coords_id,
+                        ));
+                    let plane2_extract_id = self.id_gen.next();
+                    three_planes_block.body.push(Instruction::composite_extract(
+                        f32_type_id,
+                        plane2_extract_id,
+                        plane2_fetch_id,
+                        &[0],
+                    ));
+                    let three_planes_uv_vals_id = self.id_gen.next();
+                    three_planes_block
+                        .body
+                        .push(Instruction::composite_construct(
+                            vec2f_type_id,
+                            three_planes_uv_vals_id,
+                            &[plane1_extract_id, plane2_extract_id],
+                        ));
+                    function.consume(
+                        three_planes_block,
+                        Instruction::branch(multi_plane_post_block_id),
+                    );
+                    three_planes_uv_vals_id
+                };
+
+                // SHARED MULTI PLANE
+                let mut multi_plane_post_block = Block::new(multi_plane_post_block_id);
+                let uv_vals_id = self.id_gen.next();
+                multi_plane_post_block.body.push(Instruction::phi(
+                    vec2f_type_id,
+                    uv_vals_id,
+                    &[
+                        (two_planes_uv_vals_id, two_planes_block_id),
+                        (three_planes_uv_vals_id, three_planes_block_id),
+                    ],
+                ));
+
+                let yuv1_id = self.id_gen.next();
+                multi_plane_post_block
+                    .body
+                    .push(Instruction::composite_construct(
+                        vec4f_type_id,
+                        yuv1_id,
+                        &[y_val_id, uv_vals_id, const_one_f32_id],
+                    ));
+
+                let conv_mat_id = self.id_gen.next();
+                multi_plane_post_block
+                    .body
+                    .push(Instruction::composite_extract(
+                        mat4x4f_type_id,
+                        conv_mat_id,
+                        params_id,
+                        &[0],
+                    ));
+
+                let multi_plane_rgba_id = self.id_gen.next();
+                multi_plane_post_block.body.push(Instruction::binary(
+                    spirv::Op::MatrixTimesVector,
+                    vec4f_type_id,
+                    multi_plane_rgba_id,
+                    conv_mat_id,
+                    yuv1_id,
+                ));
+
+                function.consume(multi_plane_post_block, Instruction::branch(return_block_id));
+                multi_plane_rgba_id
+            };
+
+            let mut return_block = Block::new(return_block_id);
+            let return_id = self.id_gen.next();
+            return_block.body.push(Instruction::phi(
+                vec4f_type_id,
+                return_id,
+                &[
+                    (single_plane_rgba, single_plane_block_id),
+                    (multi_plane_rgba_id, multi_plane_post_block_id),
+                ],
+            ));
+            function.consume(return_block, Instruction::return_value(return_id));
+            function.to_words(&mut self.logical_layout.function_definitions);
+        }
+        Ok(())
+    }
+
+    fn write_wrapped_image_sample(
+        &mut self,
+        ir_module: &crate::Module,
+        class: crate::ImageClass,
+    ) -> Result<(), Error> {
+        // Check if we've already emitted this function.
+        let wrapped = WrappedFunction::ImageSample { class };
+        let function_id = match self.wrapped_functions.entry(wrapped) {
+            Entry::Occupied(_) => return Ok(()),
+            Entry::Vacant(e) => *e.insert(self.id_gen.next()),
+        };
+
+        if class == crate::ImageClass::External {
+            if self.flags.contains(WriterFlags::DEBUG) {
+                self.debugs
+                    .push(Instruction::name(function_id, "nagaSampleExternalTexture"));
+            }
+            let mut function = Function::default();
+
+            let image_type_id = self.get_localtype_id(LocalType::Image(LocalImageType {
+                sampled_type: crate::Scalar::F32,
+                dim: spirv::Dim::Dim2D,
+                flags: super::ImageTypeFlags::SAMPLED,
+                image_format: spirv::ImageFormat::Unknown,
+            }));
+            let params_type_id =
+                self.get_handle_type_id(ir_module.special_types.external_texture_params.unwrap());
+            let sampler_type_id = self.get_localtype_id(LocalType::Sampler);
+            let vec2f_type_id = self.get_vec2f_type_id();
+            let vec4f_type_id = self.get_vec4f_type_id();
+            let mat4x4f_type_id = self.get_localtype_id(LocalType::Numeric(NumericType::Matrix {
+                columns: crate::VectorSize::Quad,
+                rows: crate::VectorSize::Quad,
+                scalar: crate::Scalar::F32,
+            }));
+            let function_type_id = self.get_function_type(LookupFunctionType {
+                parameter_type_ids: vec![
+                    image_type_id,
+                    image_type_id,
+                    image_type_id,
+                    params_type_id,
+                    sampler_type_id,
+                    vec2f_type_id,
+                ],
+                return_type_id: vec4f_type_id,
+            });
+            function.signature = Some(Instruction::function(
+                vec4f_type_id,
+                function_id,
+                spirv::FunctionControl::empty(),
+                function_type_id,
+            ));
+
+            let plane0_id = self.id_gen.next();
+            let plane1_id = self.id_gen.next();
+            let plane2_id = self.id_gen.next();
+            let params_id = self.id_gen.next();
+            let sampler_id = self.id_gen.next();
+            let coords_id = self.id_gen.next();
+
+            if self.flags.contains(WriterFlags::DEBUG) {
+                self.debugs.push(Instruction::name(plane0_id, "plane0"));
+                self.debugs.push(Instruction::name(plane1_id, "plane1"));
+                self.debugs.push(Instruction::name(plane2_id, "plane2"));
+                self.debugs.push(Instruction::name(params_id, "params"));
+                self.debugs.push(Instruction::name(sampler_id, "sampler"));
+                self.debugs.push(Instruction::name(coords_id, "coords"));
+            }
+
+            let plane0_par = Instruction::function_parameter(image_type_id, plane0_id);
+            let plane1_par = Instruction::function_parameter(image_type_id, plane1_id);
+            let plane2_par = Instruction::function_parameter(image_type_id, plane2_id);
+            let params_par = Instruction::function_parameter(params_type_id, params_id);
+            let sampler_par = Instruction::function_parameter(sampler_type_id, sampler_id);
+            let coords_par = Instruction::function_parameter(vec2f_type_id, coords_id);
+            for instruction in [
+                plane0_par,
+                plane1_par,
+                plane2_par,
+                params_par,
+                sampler_par,
+                coords_par,
+            ] {
+                function.parameters.push(FunctionArgument {
+                    instruction,
+                    handle_id: 0, // FIXME: need to generate a handle id?
+                });
+            }
+
+            let u32_type_id = self.get_u32_type_id();
+            let const_one_u32_id = self.get_constant_scalar(crate::Literal::U32(1));
+            let const_two_u32_id = self.get_constant_scalar(crate::Literal::U32(2));
+            let bool_type_id = self.get_bool_type_id();
+            let const_zero_f32_id = self.get_constant_scalar(crate::Literal::F32(0.0));
+            let const_one_f32_id = self.get_constant_scalar(crate::Literal::F32(1.0));
+            let f32_type_id = self.get_f32_type_id();
+            let sampled_image_type_id =
+                self.get_type_id(LookupType::Local(LocalType::SampledImage { image_type_id }));
+
+            let block_id = self.id_gen.next();
+            let mut block = Block::new(block_id);
+            let num_planes_id = self.id_gen.next();
+            block.body.push(Instruction::composite_extract(
+                u32_type_id,
+                num_planes_id,
+                params_id,
+                &[7],
+            ));
+            let num_planes_eq_one_id = self.id_gen.next();
+            block.body.push(Instruction::binary(
+                spirv::Op::IEqual,
+                bool_type_id,
+                num_planes_eq_one_id,
+                num_planes_id,
+                const_one_u32_id,
+            ));
+
+            let single_plane_block_id = self.id_gen.next();
+            let multi_plane_pre_block_id = self.id_gen.next();
+            let multi_plane_post_block_id = self.id_gen.next();
+            let return_block_id = self.id_gen.next();
+            block.body.push(Instruction::selection_merge(
+                return_block_id,
+                spirv::SelectionControl::empty(),
+            ));
+            function.consume(
+                block,
+                Instruction::branch_conditional(
+                    num_planes_eq_one_id,
+                    single_plane_block_id,
+                    multi_plane_pre_block_id,
+                ),
+            );
+
+            let single_plane_rgba = {
+                let mut single_plane_block = Block::new(single_plane_block_id);
+
+                let plane0_sampled_image_id = self.id_gen.next();
+                single_plane_block.body.push(Instruction::sampled_image(
+                    sampled_image_type_id,
+                    plane0_sampled_image_id,
+                    plane0_id,
+                    sampler_id,
+                ));
+                let plane0_sample_id = self.id_gen.next();
+                let mut plane0_sample_instr = Instruction::image_sample(
+                    vec4f_type_id,
+                    plane0_sample_id,
+                    super::instructions::SampleLod::Explicit,
+                    plane0_sampled_image_id,
+                    coords_id,
+                    None,
+                );
+                plane0_sample_instr.add_operand(spirv::ImageOperands::LOD.bits());
+                plane0_sample_instr.add_operand(const_zero_f32_id);
+                single_plane_block.body.push(plane0_sample_instr);
+                function.consume(single_plane_block, Instruction::branch(return_block_id));
+                plane0_sample_id
+            };
+
+            let multi_plane_rgba_id = {
+                let mut multi_plane_pre_block = Block::new(multi_plane_pre_block_id);
+
+                let plane0_sampled_image_id = self.id_gen.next();
+                multi_plane_pre_block.body.push(Instruction::sampled_image(
+                    sampled_image_type_id,
+                    plane0_sampled_image_id,
+                    plane0_id,
+                    sampler_id,
+                ));
+                let plane0_sample_id = self.id_gen.next();
+                let mut plane0_sample_instr = Instruction::image_sample(
+                    vec4f_type_id,
+                    plane0_sample_id,
+                    super::instructions::SampleLod::Explicit,
+                    plane0_sampled_image_id,
+                    coords_id,
+                    None,
+                );
+                plane0_sample_instr.add_operand(spirv::ImageOperands::LOD.bits());
+                plane0_sample_instr.add_operand(const_zero_f32_id);
+                multi_plane_pre_block.body.push(plane0_sample_instr);
+                let y_val_id = self.id_gen.next();
+                multi_plane_pre_block
+                    .body
+                    .push(Instruction::composite_extract(
+                        f32_type_id,
+                        y_val_id,
+                        plane0_sample_id,
+                        &[0],
+                    ));
+
+                let num_planes_eq_two_id = self.id_gen.next();
+                multi_plane_pre_block.body.push(Instruction::binary(
+                    spirv::Op::IEqual,
+                    bool_type_id,
+                    num_planes_eq_two_id,
+                    num_planes_id,
+                    const_two_u32_id,
+                ));
+                let two_planes_block_id = self.id_gen.next();
+                let three_planes_block_id = self.id_gen.next();
+                multi_plane_pre_block
+                    .body
+                    .push(Instruction::selection_merge(
+                        multi_plane_post_block_id,
+                        spirv::SelectionControl::empty(),
+                    ));
+                function.consume(
+                    multi_plane_pre_block,
+                    Instruction::branch_conditional(
+                        num_planes_eq_two_id,
+                        two_planes_block_id,
+                        three_planes_block_id,
+                    ),
+                );
+
+                // TWO PLANES
+                let two_planes_uv_vals_id = {
+                    let mut two_planes_block = Block::new(two_planes_block_id);
+                    let plane1_sampled_image_id = self.id_gen.next();
+                    two_planes_block.body.push(Instruction::sampled_image(
+                        sampled_image_type_id,
+                        plane1_sampled_image_id,
+                        plane1_id,
+                        sampler_id,
+                    ));
+                    let plane1_sample_id = self.id_gen.next();
+                    let mut plane1_sample_instr = Instruction::image_sample(
+                        vec4f_type_id,
+                        plane1_sample_id,
+                        super::instructions::SampleLod::Explicit,
+                        plane1_sampled_image_id,
+                        coords_id,
+                        None,
+                    );
+                    plane1_sample_instr.add_operand(spirv::ImageOperands::LOD.bits());
+                    plane1_sample_instr.add_operand(const_zero_f32_id);
+                    two_planes_block.body.push(plane1_sample_instr);
+                    let vec2f_type_id = self.get_vec2f_type_id();
+                    let two_planes_uv_vals_id = self.id_gen.next();
+                    two_planes_block.body.push(Instruction::vector_shuffle(
+                        vec2f_type_id,
+                        two_planes_uv_vals_id,
+                        plane1_sample_id,
+                        plane1_sample_id,
+                        &[0, 1],
+                    ));
+
+                    function.consume(
+                        two_planes_block,
+                        Instruction::branch(multi_plane_post_block_id),
+                    );
+                    two_planes_uv_vals_id
+                };
+
+                // THREE PLANES
+                let three_planes_uv_vals_id = {
+                    let mut three_planes_block = Block::new(three_planes_block_id);
+                    let plane1_sampled_image_id = self.id_gen.next();
+                    three_planes_block.body.push(Instruction::sampled_image(
+                        sampled_image_type_id,
+                        plane1_sampled_image_id,
+                        plane1_id,
+                        sampler_id,
+                    ));
+                    let plane1_sample_id = self.id_gen.next();
+                    let mut plane1_sample_instr = Instruction::image_sample(
+                        vec4f_type_id,
+                        plane1_sample_id,
+                        super::instructions::SampleLod::Explicit,
+                        plane1_sampled_image_id,
+                        coords_id,
+                        None,
+                    );
+                    plane1_sample_instr.add_operand(spirv::ImageOperands::LOD.bits());
+                    plane1_sample_instr.add_operand(const_zero_f32_id);
+                    three_planes_block.body.push(plane1_sample_instr);
+                    let plane1_extract_id = self.id_gen.next();
+                    three_planes_block.body.push(Instruction::composite_extract(
+                        f32_type_id,
+                        plane1_extract_id,
+                        plane1_sample_id,
+                        &[0],
+                    ));
+                    let plane2_sampled_image_id = self.id_gen.next();
+                    three_planes_block.body.push(Instruction::sampled_image(
+                        sampled_image_type_id,
+                        plane2_sampled_image_id,
+                        plane2_id,
+                        sampler_id,
+                    ));
+                    let plane2_sample_id = self.id_gen.next();
+                    let mut plane2_sample_instr = Instruction::image_sample(
+                        vec4f_type_id,
+                        plane2_sample_id,
+                        super::instructions::SampleLod::Explicit,
+                        plane2_sampled_image_id,
+                        coords_id,
+                        None,
+                    );
+                    plane2_sample_instr.add_operand(spirv::ImageOperands::LOD.bits());
+                    plane2_sample_instr.add_operand(const_zero_f32_id);
+                    three_planes_block.body.push(plane2_sample_instr);
+                    let plane2_extract_id = self.id_gen.next();
+                    three_planes_block.body.push(Instruction::composite_extract(
+                        f32_type_id,
+                        plane2_extract_id,
+                        plane2_sample_id,
+                        &[0],
+                    ));
+                    let three_planes_uv_vals_id = self.id_gen.next();
+                    three_planes_block
+                        .body
+                        .push(Instruction::composite_construct(
+                            vec2f_type_id,
+                            three_planes_uv_vals_id,
+                            &[plane1_extract_id, plane2_extract_id],
+                        ));
+                    function.consume(
+                        three_planes_block,
+                        Instruction::branch(multi_plane_post_block_id),
+                    );
+                    three_planes_uv_vals_id
+                };
+
+                // SHARED MULTI PLANE
+                let mut multi_plane_post_block = Block::new(multi_plane_post_block_id);
+                let uv_vals_id = self.id_gen.next();
+                multi_plane_post_block.body.push(Instruction::phi(
+                    vec2f_type_id,
+                    uv_vals_id,
+                    &[
+                        (two_planes_uv_vals_id, two_planes_block_id),
+                        (three_planes_uv_vals_id, three_planes_block_id),
+                    ],
+                ));
+
+                let yuv1_id = self.id_gen.next();
+                multi_plane_post_block
+                    .body
+                    .push(Instruction::composite_construct(
+                        vec4f_type_id,
+                        yuv1_id,
+                        &[y_val_id, uv_vals_id, const_one_f32_id],
+                    ));
+
+                let conv_mat_id = self.id_gen.next();
+                multi_plane_post_block
+                    .body
+                    .push(Instruction::composite_extract(
+                        mat4x4f_type_id,
+                        conv_mat_id,
+                        params_id,
+                        &[0],
+                    ));
+
+                let multi_plane_rgba_id = self.id_gen.next();
+                multi_plane_post_block.body.push(Instruction::binary(
+                    spirv::Op::MatrixTimesVector,
+                    vec4f_type_id,
+                    multi_plane_rgba_id,
+                    conv_mat_id,
+                    yuv1_id,
+                ));
+
+                function.consume(multi_plane_post_block, Instruction::branch(return_block_id));
+                multi_plane_rgba_id
+            };
+
+            let mut return_block = Block::new(return_block_id);
+            let return_id = self.id_gen.next();
+            return_block.body.push(Instruction::phi(
+                vec4f_type_id,
+                return_id,
+                &[
+                    (single_plane_rgba, single_plane_block_id),
+                    (multi_plane_rgba_id, multi_plane_post_block_id),
+                ],
+            ));
+            function.consume(return_block, Instruction::return_value(return_id));
+            function.to_words(&mut self.logical_layout.function_definitions);
+        }
         Ok(())
     }
 
@@ -918,7 +1679,14 @@ impl Writer {
             if let Some(ref mut iface) = interface {
                 // Have to include global variables in the interface
                 if self.physical_layout.version >= 0x10400 {
-                    iface.varying_ids.push(gv.var_id);
+                    if let Some(et) = self.global_external_texture_variables.get(&handle) {
+                        iface.varying_ids.push(et.plane0.var_id);
+                        iface.varying_ids.push(et.plane1.var_id);
+                        iface.varying_ids.push(et.plane2.var_id);
+                        iface.varying_ids.push(et.params.var_id);
+                    } else {
+                        iface.varying_ids.push(gv.var_id);
+                    }
                 }
             }
 
@@ -926,6 +1694,11 @@ impl Writer {
             //
             // Any that are binding arrays we skip as we cannot load the array, we must load the result after indexing.
             match ir_module.types[var.ty].inner {
+                // External images are handled seperately below
+                crate::TypeInner::Image {
+                    class: crate::ImageClass::External,
+                    ..
+                } => continue,
                 crate::TypeInner::BindingArray { .. } => {
                     gv.access_id = gv.var_id;
                 }
@@ -960,6 +1733,40 @@ impl Writer {
             // work around borrow checking in the presence of `self.xxx()` calls
             self.global_variables[handle] = gv;
         }
+
+        // FIXME: unify this with "normal" global variables above?
+        let mut external_texture_globals =
+            core::mem::take(&mut self.global_external_texture_variables);
+        for (handle, external_texture) in external_texture_globals.iter_mut() {
+            for plane in [
+                &mut external_texture.plane0,
+                &mut external_texture.plane1,
+                &mut external_texture.plane2,
+            ] {
+                let ty = ir_module.global_variables[*handle].ty;
+                let var_type_id = self.get_handle_type_id(ty);
+                let id = self.id_gen.next();
+                plane.reset_for_function();
+                prelude
+                    .body
+                    .push(Instruction::load(var_type_id, id, plane.var_id, None));
+                plane.access_id = plane.var_id;
+                plane.handle_id = id;
+            }
+            let params_type_id =
+                self.get_handle_type_id(ir_module.special_types.external_texture_params.unwrap());
+            let params_id = self.id_gen.next();
+            external_texture.params.reset_for_function();
+            prelude.body.push(Instruction::load(
+                params_type_id,
+                params_id,
+                external_texture.params.var_id,
+                None,
+            ));
+            external_texture.params.access_id = external_texture.params.var_id;
+            external_texture.params.handle_id = params_id;
+        }
+        self.global_external_texture_variables = external_texture_globals;
 
         // Create a `BlockContext` for generating SPIR-V for the function's
         // body.
@@ -1246,7 +2053,7 @@ impl Writer {
                         self.request_image_format_capabilities(format.into())?;
                         false
                     }
-                    crate::ImageClass::External => unimplemented!(),
+                    crate::ImageClass::External => true,
                 };
 
                 match dim {
@@ -1441,9 +2248,11 @@ impl Writer {
                         let member_id = self.get_handle_type_id(member.ty);
                         member_ids.push(member_id);
                     }
-                    if has_runtime_array {
+                    let is_uniform = Some(handle) == module.special_types.external_texture_params;
+                    if has_runtime_array || is_uniform {
                         self.decorate(id, Decoration::Block, &[]);
                     }
+
                     Instruction::type_struct(id, member_ids.as_slice())
                 }
 
@@ -2112,6 +2921,85 @@ impl Writer {
         Ok(id)
     }
 
+    fn write_external_texture_global(
+        &mut self,
+        ir_module: &crate::Module,
+        handle: Handle<crate::GlobalVariable>,
+        global_variable: &crate::GlobalVariable,
+    ) -> Result<(), Error> {
+        use spirv::Decoration;
+        let orig_binding = global_variable.binding.ok_or({
+            Error::Validation("External texture global variable must have binding info")
+        })?;
+        let (planes, params) = match self
+            .binding_map
+            .get(&orig_binding)
+            .map(|info| info.target.clone())
+        {
+            Some(BindingTarget::ExternalTexture { planes, params }) => (planes, params),
+            _ => ([orig_binding, orig_binding, orig_binding], orig_binding),
+        };
+
+        // FIXME: look up bindng_map to see if this is an array? We don't allow
+        // ExternalTexture arrays currently. But maybe we should at least return an error
+
+        let texture_class = spirv::StorageClass::UniformConstant;
+        let texture_type_id = self.get_handle_pointer_type_id(global_variable.ty, texture_class);
+
+        let mut make_plane = |i| {
+            let id = self.id_gen.next();
+            if self.flags.contains(WriterFlags::DEBUG) {
+                if let Some(ref name) = global_variable.name {
+                    self.debugs
+                        .push(Instruction::name(id, &format!("{name}_plane{i}")));
+                }
+            }
+            let binding: crate::ResourceBinding = planes[i];
+            self.decorate(id, Decoration::DescriptorSet, &[binding.group]);
+            self.decorate(id, Decoration::Binding, &[binding.binding]);
+            Instruction::variable(texture_type_id, id, texture_class, None)
+                .to_words(&mut self.logical_layout.declarations);
+            id
+        };
+
+        let plane0_id = make_plane(0);
+        let plane1_id = make_plane(1);
+        let plane2_id = make_plane(2);
+
+        let params_type_id =
+            self.get_handle_type_id(ir_module.special_types.external_texture_params.unwrap());
+        let params_ptr_type_id =
+            self.get_pointer_type_id(params_type_id, spirv::StorageClass::Uniform);
+        let params_id = self.id_gen.next();
+        if self.flags.contains(WriterFlags::DEBUG) {
+            if let Some(ref name) = global_variable.name {
+                self.debugs
+                    .push(Instruction::name(params_id, &format!("{name}_params")));
+            }
+        }
+        self.decorate(params_id, Decoration::DescriptorSet, &[params.group]);
+        self.decorate(params_id, Decoration::Binding, &[params.binding]);
+        Instruction::variable(
+            params_ptr_type_id,
+            params_id,
+            spirv::StorageClass::Uniform,
+            None,
+        )
+        .to_words(&mut self.logical_layout.declarations);
+
+        self.global_external_texture_variables.insert(
+            handle,
+            GlobalExternalTextureVariable {
+                plane0: GlobalVariable::new(plane0_id),
+                plane1: GlobalVariable::new(plane1_id),
+                plane2: GlobalVariable::new(plane2_id),
+                params: GlobalVariable::new(params_id),
+            },
+        );
+
+        Ok(())
+    }
+
     fn write_global_variable(
         &mut self,
         ir_module: &crate::Module,
@@ -2153,14 +3041,22 @@ impl Writer {
         // but there is still code that tries to register the pre-substituted type,
         // and it is failing on 0.
         let mut substitute_inner_type_lookup = None;
-        if let Some(ref res_binding) = global_variable.binding {
+        if let Some(res_binding) = global_variable.binding {
+            let binding_info = self
+                .binding_map
+                .get(&res_binding)
+                .cloned()
+                .unwrap_or(BindingInfo {
+                    target: BindingTarget::Single(res_binding),
+                    binding_array_size: None,
+                });
+            let BindingTarget::Single(res_binding) = binding_info.target else {
+                unreachable!()
+            };
             self.decorate(id, Decoration::DescriptorSet, &[res_binding.group]);
             self.decorate(id, Decoration::Binding, &[res_binding.binding]);
 
-            if let Some(&BindingInfo {
-                binding_array_size: Some(remapped_binding_array_size),
-            }) = self.binding_map.get(res_binding)
-            {
+            if let Some(remapped_binding_array_size) = binding_info.binding_array_size {
                 if let crate::TypeInner::BindingArray { base, .. } =
                     ir_module.types[global_variable.ty].inner
                 {
@@ -2457,8 +3353,18 @@ impl Writer {
             // If a single entry point was specified, only write `OpVariable` instructions
             // for the globals it actually uses. Emit dummies for the others,
             // to preserve the indices in `global_variables`.
-            let gvar = match ep_index {
-                Some(index) if mod_info.get_entry_point(index)[handle].is_empty() => {
+            let gvar = match (ep_index, &ir_module.types[var.ty].inner) {
+                (Some(index), _) if mod_info.get_entry_point(index)[handle].is_empty() => {
+                    GlobalVariable::dummy()
+                }
+                (
+                    _,
+                    &crate::TypeInner::Image {
+                        class: crate::ImageClass::External,
+                        ..
+                    },
+                ) => {
+                    self.write_external_texture_global(ir_module, handle, var)?;
                     GlobalVariable::dummy()
                 }
                 _ => {
