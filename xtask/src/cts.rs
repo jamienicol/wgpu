@@ -73,7 +73,7 @@ pub fn run_cts(shell: Shell, mut args: Arguments) -> anyhow::Result<()> {
             .args(["--manifest-path", "../Cargo.toml"])
             .args(["-p", "cts_runner"])
             .args(["--bin", "cts_runner"])
-            .args(["--", "./tools/run_deno", "--verbose"])
+            .args(["--", "./tools/run_deno", "--verbose", "--debug"])
             .args([test])
             .run()
             .context("CTS failed")?;

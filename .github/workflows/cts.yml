@@ -81,7 +81,7 @@ jobs:
             echo "======= CTS TESTS $backend ======";
             grep -v '^//' ../wgpu/cts_runner/test.lst | while IFS=$' \t\r\n' read test; do
               echo "=== Running $test ===";
-              DENO_WEBGPU_BACKEND=$backend cargo run --manifest-path ../wgpu/cts_runner/Cargo.toml --frozen -- ./tools/run_deno --verbose "$test";
+              DENO_WEBGPU_BACKEND=$backend cargo run --manifest-path ../wgpu/cts_runner/Cargo.toml --frozen -- ./tools/run_deno --verbose --debug "$test";
             done
           done
           echo;
