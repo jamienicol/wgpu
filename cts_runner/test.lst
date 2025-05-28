@@ -13,3 +13,5 @@ webgpu:api,operation,rendering,depth:*
 webgpu:api,operation,rendering,draw:*
 webgpu:api,operation,uncapturederror:*
 webgpu:shader,execution,expression,call,builtin,textureSampleBaseClampToEdge:2d_coords:stage="c";textureType="texture_2d<f32>";*
+webgpu:shader,execution,expression,call,builtin,textureSampleBaseClampToEdge:2d_coords:stage="v";textureType="texture_2d<f32>";*
+webgpu:shader,execution,expression,call,builtin,textureSampleBaseClampToEdge:2d_coords:stage="f";textureType="texture_2d<f32>";*

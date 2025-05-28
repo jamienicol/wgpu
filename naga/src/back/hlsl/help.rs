@@ -263,9 +263,9 @@ impl<W: Write> super::Writer<'_, W> {
             } => {
                 writeln!(self.out, "float4 {IMAGE_SAMPLE_BASE_CLAMP_TO_EDGE_FUNCTION}(Texture2D<float4> tex, SamplerState samp, float2 coords) {{")?;
                 let l1 = crate::back::Level(1);
-                writeln!(self.out, "{l1}float2 size;")?;
-                writeln!(self.out, "{l1}tex.GetDimensions(size.x, size.y);")?;
-                writeln!(self.out, "{l1}float2 half_texel = float2(0.5, 0.5) / size;")?;
+                writeln!(self.out, "{l1}float3 size;")?;
+                writeln!(self.out, "{l1}tex.GetDimensions(0, size.x, size.y, size.z);")?;
+                writeln!(self.out, "{l1}float2 half_texel = float2(0.5, 0.5) / size.xy;")?;
                 writeln!(
                     self.out,
                     "{l1}return tex.SampleLevel(samp, clamp(coords, half_texel, 1.0 - half_texel), 0.0);"
