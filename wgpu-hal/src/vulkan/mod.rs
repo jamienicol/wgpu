@@ -1010,6 +1010,12 @@ struct BindingInfo {
     binding_array_size: Option<NonZeroU32>,
 }
 
+#[derive(Copy, Clone, Debug)]
+struct ExternalTextureBindingInfo {
+    planes: [u32; 3],
+    params: u32,
+}
+
 #[derive(Debug)]
 pub struct BindGroupLayout {
     raw: vk::DescriptorSetLayout,
@@ -1019,6 +1025,7 @@ pub struct BindGroupLayout {
     /// Map of original binding index to remapped binding index and optional
     /// array size.
     binding_map: Vec<(u32, BindingInfo)>,
+    external_texture_binding_map: Vec<(u32, ExternalTextureBindingInfo)>,
     contains_binding_arrays: bool,
 }
 
@@ -1028,6 +1035,7 @@ impl crate::DynBindGroupLayout for BindGroupLayout {}
 pub struct PipelineLayout {
     raw: vk::PipelineLayout,
     binding_map: naga::back::spv::BindingMap,
+    external_texture_binding_map: naga::back::spv::ExternalTextureBindingMap,
 }
 
 impl crate::DynPipelineLayout for PipelineLayout {}

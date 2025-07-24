@@ -779,7 +779,12 @@ pub fn map_binding_type(ty: wgt::BindingType) -> vk::DescriptorType {
         wgt::BindingType::AccelerationStructure { .. } => {
             vk::DescriptorType::ACCELERATION_STRUCTURE_KHR
         }
-        wgt::BindingType::ExternalTexture => unimplemented!(),
+        // External textures require multiple bindings and therefore cannot
+        // be mapped to a single descriptor range type. They must be handled
+        // separately by the caller.
+        wgt::BindingType::ExternalTexture => {
+            unreachable!("External textures must be handled separately")
+        }
     }
 }
 

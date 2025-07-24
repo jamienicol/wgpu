@@ -975,6 +975,7 @@ bitflags_array! {
         /// Supported platforms:
         /// - DX12
         /// - Metal
+        /// - Vulkan
         const EXTERNAL_TEXTURE = 1 << 31;
 
         // Shader:

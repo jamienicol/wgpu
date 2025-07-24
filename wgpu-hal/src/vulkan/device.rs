@@ -857,6 +857,7 @@ impl super::Device {
         stage: &crate::ProgrammableStage<super::ShaderModule>,
         naga_stage: naga::ShaderStage,
         binding_map: &naga::back::spv::BindingMap,
+        external_texture_binding_map: &naga::back::spv::ExternalTextureBindingMap,
     ) -> Result<CompiledStage, crate::PipelineError> {
         let stage_flags = crate::auxil::map_naga_stage(naga_stage);
         let vk_module = match *stage.module {
@@ -872,6 +873,7 @@ impl super::Device {
                 let needs_temp_options = !runtime_checks.bounds_checks
                     || !runtime_checks.force_loop_bounding
                     || !binding_map.is_empty()
+                    || !external_texture_binding_map.is_empty()
                     || naga_shader.debug_source.is_some()
                     || !stage.zero_initialize_workgroup_memory;
                 let mut temp_options;
@@ -890,6 +892,10 @@ impl super::Device {
                     }
                     if !binding_map.is_empty() {
                         temp_options.binding_map = binding_map.clone();
+                    }
+                    if !external_texture_binding_map.is_empty() {
+                        temp_options.external_texture_binding_map =
+                            external_texture_binding_map.clone();
                     }
 
                     if let Some(ref debug) = naga_shader.debug_source {
@@ -1487,6 +1493,7 @@ impl crate::Device for super::Device {
         let mut vk_bindings = Vec::new();
         let mut binding_flags = Vec::new();
         let mut binding_map = Vec::new();
+        let mut external_texture_binding_map = Vec::new();
         let mut next_binding = 0;
         let mut contains_binding_arrays = false;
         let mut desc_count = gpu_descriptor::DescriptorTotalCount::default();
@@ -1508,7 +1515,35 @@ impl crate::Device for super::Device {
 
             let count = entry.count.map_or(1, |c| c.get());
             match entry.ty {
-                wgt::BindingType::ExternalTexture => unimplemented!(),
+                wgt::BindingType::ExternalTexture => {
+                    for (i, descriptor_type) in [
+                        vk::DescriptorType::SAMPLED_IMAGE,
+                        vk::DescriptorType::SAMPLED_IMAGE,
+                        vk::DescriptorType::SAMPLED_IMAGE,
+                        vk::DescriptorType::UNIFORM_BUFFER,
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        vk_bindings.push(vk::DescriptorSetLayoutBinding {
+                            binding: next_binding + i as u32,
+                            descriptor_type,
+                            descriptor_count: count,
+                            stage_flags: conv::map_shader_stage(entry.visibility),
+                            p_immutable_samplers: ptr::null(),
+                            _marker: Default::default(),
+                        });
+                        binding_flags.push(flags);
+                    }
+                    external_texture_binding_map.push((
+                        entry.binding,
+                        super::ExternalTextureBindingInfo {
+                            planes: core::array::from_fn(|i| next_binding + i as u32),
+                            params: next_binding + 3,
+                        },
+                    ));
+                    next_binding += 4;
+                }
                 _ => {
                     vk_bindings.push(vk::DescriptorSetLayoutBinding {
                         binding: next_binding,
@@ -1563,7 +1598,12 @@ impl crate::Device for super::Device {
                 wgt::BindingType::AccelerationStructure { .. } => {
                     desc_count.acceleration_structure += count;
                 }
-                wgt::BindingType::ExternalTexture => unimplemented!(),
+                wgt::BindingType::ExternalTexture => {
+                    // Each external texture requires 3 texture planes and a
+                    // parameters buffer
+                    desc_count.sampled_image += 3 * count;
+                    desc_count.uniform_buffer += count;
+                }
             }
         }
 
@@ -1598,6 +1638,7 @@ impl crate::Device for super::Device {
             desc_count,
             entries: desc.entries.into(),
             binding_map,
+            external_texture_binding_map,
             contains_binding_arrays,
         })
     }
@@ -1666,9 +1707,38 @@ impl crate::Device for super::Device {
                 );
             }
         }
+        let mut external_texture_binding_map = BTreeMap::new();
+        for (group, &layout) in desc.bind_group_layouts.iter().enumerate() {
+            for &(binding, binding_info) in &layout.external_texture_binding_map {
+                external_texture_binding_map.insert(
+                    naga::ResourceBinding {
+                        group: group as u32,
+                        binding,
+                    },
+                    naga::back::spv::ExternalTextureBindingInfo {
+                        planes: binding_info
+                            .planes
+                            .map(|plane| naga::back::spv::BindingInfo {
+                                descriptor_set: group as u32,
+                                binding: plane,
+                                binding_array_size: None,
+                            }),
+                        params: naga::back::spv::BindingInfo {
+                            descriptor_set: group as u32,
+                            binding: binding_info.params,
+                            binding_array_size: None,
+                        },
+                    },
+                );
+            }
+        }
 
         self.counters.pipeline_layouts.add(1);
-        Ok(super::PipelineLayout { raw, binding_map })
+        Ok(super::PipelineLayout {
+            raw,
+            binding_map,
+            external_texture_binding_map,
+        })
     }
     unsafe fn destroy_pipeline_layout(&self, pipeline_layout: super::PipelineLayout) {
         unsafe {
@@ -1759,10 +1829,16 @@ impl crate::Device for super::Device {
             }
         }
 
+        // FIXME: can I use layout.desc_count for the lengths of these?
+        // Then I don't have to add ugliness for external textures
+        // Add assertions that the values match and run the test suite
         let mut writes = Vec::with_capacity(desc.entries.len());
-        let mut buffer_infos = Vec::with_capacity(desc.buffers.len());
+        let mut buffer_infos =
+            Vec::with_capacity(desc.buffers.len() + desc.external_textures.len());
         let mut buffer_infos = ExtendStack::from_vec_capacity(&mut buffer_infos);
-        let mut image_infos = Vec::with_capacity(desc.samplers.len() + desc.textures.len());
+        let mut image_infos = Vec::with_capacity(
+            desc.samplers.len() + desc.textures.len() + 3 * desc.external_textures.len(),
+        );
         let mut image_infos = ExtendStack::from_vec_capacity(&mut image_infos);
         // TODO: This length could be reduced to just the number of top-level acceleration
         // structure bindings, where multiple consecutive TLAS bindings that are set via
@@ -1884,7 +1960,56 @@ impl crate::Device for super::Device {
                     );
                     next_binding += 1;
                 }
-                wgt::BindingType::ExternalTexture => unimplemented!(),
+                wgt::BindingType::ExternalTexture => {
+                    let start = entry.resource_index;
+                    let end = start + entry.count;
+                    for i in 0..3 {
+                        let local_image_infos;
+                        (image_infos, local_image_infos) = image_infos.extend(
+                            desc.external_textures[start as usize..end as usize]
+                                .iter()
+                                .map(|external_texture| {
+                                    let layout = conv::derive_image_layout(
+                                        external_texture.planes[i].usage,
+                                        external_texture.planes[i].view.format,
+                                    );
+                                    vk::DescriptorImageInfo::default()
+                                        .image_view(external_texture.planes[i].view.raw)
+                                        .image_layout(layout)
+                                }),
+                        );
+                        writes.push(
+                            write
+                                .dst_binding(next_binding)
+                                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                                .image_info(local_image_infos),
+                        );
+                        next_binding += 1;
+                    }
+                    let local_buffer_infos;
+                    (buffer_infos, local_buffer_infos) = buffer_infos.extend(
+                        desc.external_textures[start as usize..end as usize]
+                            .iter()
+                            .map(|external_textures| {
+                                vk::DescriptorBufferInfo::default()
+                                    .buffer(external_textures.params.buffer.raw)
+                                    .offset(external_textures.params.offset)
+                                    .range(
+                                        external_textures
+                                            .params
+                                            .size
+                                            .map_or(vk::WHOLE_SIZE, wgt::BufferSize::get),
+                                    )
+                            }),
+                    );
+                    writes.push(
+                        write
+                            .dst_binding(next_binding)
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                            .buffer_info(local_buffer_infos),
+                    );
+                    next_binding += 1;
+                }
             }
         }
 
@@ -2045,6 +2170,7 @@ impl crate::Device for super::Device {
                     vertex_stage,
                     naga::ShaderStage::Vertex,
                     &desc.layout.binding_map,
+                    &desc.layout.external_texture_binding_map,
                 )?);
                 stages.push(compiled_vs.as_ref().unwrap().create_info);
             }
@@ -2057,6 +2183,7 @@ impl crate::Device for super::Device {
                         t,
                         naga::ShaderStage::Task,
                         &desc.layout.binding_map,
+                        &desc.layout.external_texture_binding_map,
                     )?);
                     stages.push(compiled_ts.as_ref().unwrap().create_info);
                 }
@@ -2064,6 +2191,7 @@ impl crate::Device for super::Device {
                     mesh_stage,
                     naga::ShaderStage::Mesh,
                     &desc.layout.binding_map,
+                    &desc.layout.external_texture_binding_map,
                 )?);
                 stages.push(compiled_ms.as_ref().unwrap().create_info);
             }
@@ -2074,6 +2202,7 @@ impl crate::Device for super::Device {
                     stage,
                     naga::ShaderStage::Fragment,
                     &desc.layout.binding_map,
+                    &desc.layout.external_texture_binding_map,
                 )?;
                 stages.push(compiled.create_info);
                 Some(compiled)
@@ -2282,6 +2411,7 @@ impl crate::Device for super::Device {
             &desc.stage,
             naga::ShaderStage::Compute,
             &desc.layout.binding_map,
+            &desc.layout.external_texture_binding_map,
         )?;
 
         let vk_infos = [{
