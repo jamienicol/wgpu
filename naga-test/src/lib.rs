@@ -75,6 +75,28 @@ where
     Ok(map)
 }
 
+#[derive(serde::Deserialize)]
+struct ExternalTextureBindingMapSerialization {
+    resource_binding: naga::ResourceBinding,
+    bind_target: naga::back::spv::ExternalTextureBindingInfo,
+}
+
+fn deserialize_external_texture_binding_map<'de, D>(
+    deserializer: D,
+) -> Result<naga::back::spv::ExternalTextureBindingMap, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    let vec = Vec::<ExternalTextureBindingMapSerialization>::deserialize(deserializer)?;
+    let mut map = naga::back::spv::ExternalTextureBindingMap::default();
+    for item in vec {
+        map.insert(item.resource_binding, item.bind_target);
+    }
+    Ok(map)
+}
+
 #[derive(Default, serde::Deserialize)]
 #[serde(default)]
 pub struct WgslInParameters {
@@ -114,6 +136,8 @@ pub struct SpirvOutParameters {
     pub separate_entry_points: bool,
     #[serde(deserialize_with = "deserialize_binding_map")]
     pub binding_map: naga::back::spv::BindingMap,
+    #[serde(deserialize_with = "deserialize_external_texture_binding_map")]
+    pub external_texture_binding_map: naga::back::spv::ExternalTextureBindingMap,
     pub use_storage_input_output_16: bool,
 }
 impl Default for SpirvOutParameters {
@@ -128,6 +152,7 @@ impl Default for SpirvOutParameters {
             separate_entry_points: false,
             use_storage_input_output_16: true,
             binding_map: naga::back::spv::BindingMap::default(),
+            external_texture_binding_map: naga::back::spv::ExternalTextureBindingMap::default(),
         }
     }
 }
@@ -157,6 +182,7 @@ impl SpirvOutParameters {
             bounds_check_policies,
             fake_missing_bindings: true,
             binding_map: self.binding_map.clone(),
+            external_texture_binding_map: self.external_texture_binding_map.clone(),
             zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::Polyfill,
             force_loop_bounding: true,
             debug_info,

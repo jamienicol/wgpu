@@ -540,6 +540,7 @@ fn run() -> anyhow::Result<()> {
                     Some("wgsl") => C::CLIP_DISTANCE | C::CULL_DISTANCE,
                     Some("metal") => C::CULL_DISTANCE,
                     Some("hlsl") => C::empty(),
+                    Some("spv") => C::empty(),
                     _ => C::TEXTURE_EXTERNAL,
                 };
                 caps & !missing

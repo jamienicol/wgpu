@@ -8,7 +8,7 @@ use super::{
     Block, BlockContext, Function, FunctionArgument, Instruction, LookupFunctionType, NumericType,
     Writer,
 };
-use crate::arena::Handle;
+use crate::{arena::Handle, back::spv::BaseFunctionArgument};
 
 impl Writer {
     pub(super) fn write_ray_query_get_intersection_function(
@@ -72,10 +72,12 @@ impl Writer {
         let blank_intersection = self.get_constant_null(intersection_type_id);
         let query_id = self.id_gen.next();
         let instruction = Instruction::function_parameter(argument_type_id, query_id);
-        function.parameters.push(FunctionArgument {
-            instruction,
-            handle_id: 0,
-        });
+        function
+            .parameters
+            .push(FunctionArgument::Single(BaseFunctionArgument {
+                instruction,
+                handle_id: 0,
+            }));
 
         let label_id = self.id_gen.next();
         let mut block = Block::new(label_id);

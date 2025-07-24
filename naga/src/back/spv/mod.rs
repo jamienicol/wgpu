@@ -53,6 +53,7 @@ struct LogicalLayout {
     function_definitions: Vec<Word>,
 }
 
+#[derive(Debug)]
 struct Instruction {
     op: spirv::Op,
     wc: u32,
@@ -210,10 +211,16 @@ impl Function {
     fn parameter_id(&self, index: u32) -> Word {
         match self.entry_point_context {
             Some(ref context) => context.argument_ids[index as usize],
-            None => self.parameters[index as usize]
-                .instruction
-                .result_id
-                .unwrap(),
+            None => match self.parameters[index as usize] {
+                FunctionArgument::Single(ref arg) => arg.instruction.result_id.unwrap(),
+                // FIXME: what does this do? this is called from cache_expression_value.
+                // maybe we should return at the top of that function for external textures
+                // (both args and globals). or just be happy to return any old thing here?
+                // maybe 0 as that's clearly not a valid id?
+                FunctionArgument::ExternalTexture { ref planes, .. } => {
+                    planes[0].instruction.result_id.unwrap()
+                }
+            },
         }
     }
 }
@@ -279,7 +286,12 @@ impl LocalImageType {
                 flags: make_flags(false, ImageTypeFlags::empty()),
                 image_format: format.into(),
             },
-            crate::ImageClass::External => unimplemented!(),
+            crate::ImageClass::External => LocalImageType {
+                sampled_type: crate::Scalar::F32,
+                dim,
+                flags: make_flags(false, ImageTypeFlags::SAMPLED),
+                image_format: spirv::ImageFormat::Unknown,
+            },
         }
     }
 }
@@ -463,6 +475,13 @@ enum WrappedFunction {
         left_type_id: Word,
         right_type_id: Word,
     },
+    ImageLoad {
+        class: crate::ImageClass,
+        coord_scalar: crate::Scalar,
+    },
+    ImageSample {
+        class: crate::ImageClass,
+    },
 }
 
 /// A map from evaluated [`Expression`](crate::Expression)s to their SPIR-V ids.
@@ -550,7 +569,7 @@ enum CachedConstant {
 /// [`Storage`]: crate::AddressSpace::Storage
 /// [`Uniform`]: crate::AddressSpace::Uniform
 /// [`Struct`]: crate::TypeInner::Struct
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct GlobalVariable {
     /// The SPIR-V id of the `OpVariable` that declares the global.
     ///
@@ -616,10 +635,26 @@ impl GlobalVariable {
     }
 }
 
-struct FunctionArgument {
+#[derive(Debug, Clone)]
+struct GlobalExternalTextureVariable {
+    planes: [GlobalVariable; 3],
+    params: GlobalVariable,
+}
+
+#[derive(Debug)]
+pub struct BaseFunctionArgument {
     /// Actual instruction of the argument.
     instruction: Instruction,
     handle_id: Word,
+}
+
+#[derive(Debug)]
+pub enum FunctionArgument {
+    Single(BaseFunctionArgument),
+    ExternalTexture {
+        planes: [BaseFunctionArgument; 3],
+        params: BaseFunctionArgument,
+    },
 }
 
 /// Tracks the expressions for which the backend emits the following instructions:
@@ -762,8 +797,11 @@ pub struct Writer {
     constant_ids: HandleVec<crate::Expression, Word>,
     cached_constants: crate::FastHashMap<CachedConstant, Word>,
     global_variables: HandleVec<crate::GlobalVariable, GlobalVariable>,
+    global_external_texture_variables:
+        crate::FastHashMap<Handle<crate::GlobalVariable>, GlobalExternalTextureVariable>,
     fake_missing_bindings: bool,
     binding_map: BindingMap,
+    external_texture_binding_map: ExternalTextureBindingMap,
 
     // Cached expressions are only meaningful within a BlockContext, but we
     // retain the table here between functions to save heap allocations.
@@ -827,6 +865,18 @@ pub struct BindingInfo {
 // Using `BTreeMap` instead of `HashMap` so that we can hash itself.
 pub type BindingMap = alloc::collections::BTreeMap<crate::ResourceBinding, BindingInfo>;
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
+#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+pub struct ExternalTextureBindingInfo {
+    pub planes: [BindingInfo; 3],
+    pub params: BindingInfo,
+}
+
+// Using `BTreeMap` instead of `HashMap` so that we can hash itself.
+pub type ExternalTextureBindingMap =
+    alloc::collections::BTreeMap<crate::ResourceBinding, ExternalTextureBindingInfo>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ZeroInitializeWorkgroupMemoryMode {
     /// Via `VK_KHR_zero_initialize_workgroup_memory` or Vulkan 1.3
@@ -850,6 +900,8 @@ pub struct Options<'a> {
 
     /// Map of resources to information about the binding.
     pub binding_map: BindingMap,
+
+    pub external_texture_binding_map: ExternalTextureBindingMap,
 
     /// If given, the set of capabilities modules are allowed to use. Code that
     /// requires capabilities beyond these is rejected with an error.
@@ -888,6 +940,7 @@ impl Default for Options<'_> {
             flags,
             fake_missing_bindings: true,
             binding_map: BindingMap::default(),
+            external_texture_binding_map: ExternalTextureBindingMap::default(),
             capabilities: None,
             bounds_check_policies: BoundsCheckPolicies::default(),
             zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode::Polyfill,

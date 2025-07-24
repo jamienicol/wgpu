@@ -8,7 +8,7 @@ use super::{
     selection::{MergeTuple, Selection},
     Block, BlockContext, Error, IdGenerator, Instruction, LocalType, LookupType, NumericType,
 };
-use crate::arena::Handle;
+use crate::{arena::Handle, back::spv::FunctionArgument};
 
 /// Information about a vector of coordinates.
 ///
@@ -118,7 +118,12 @@ impl Load {
             crate::ImageClass::Depth { .. } | crate::ImageClass::Sampled { .. } => {
                 spirv::Op::ImageFetch
             }
-            crate::ImageClass::External => unimplemented!(),
+            // External images are lowered to multiple textures and therefore cannot be
+            // loaded from by a single instruction. They must be handled separately by
+            // the caller.
+            crate::ImageClass::External => {
+                unreachable!("External images must be handled separately")
+            }
         };
 
         // `OpImageRead` and `OpImageFetch` instructions produce vec4<f32>
@@ -373,13 +378,29 @@ impl BlockContext<'_> {
     }
 
     pub(super) fn get_handle_id(&mut self, expr_handle: Handle<crate::Expression>) -> Word {
+        // External images are lowered to multiple textures and therefore do not have a
+        // single handle ID. They must be handled separately by the caller.
+        assert!(
+            !matches!(
+                *self.fun_info[expr_handle]
+                    .ty
+                    .inner_with(&self.ir_module.types),
+                crate::TypeInner::Image {
+                    class: crate::ImageClass::External,
+                    ..
+                }
+            ),
+            "External images must be handled separately"
+        );
+
         let id = match self.ir_function.expressions[expr_handle] {
             crate::Expression::GlobalVariable(handle) => {
                 self.writer.global_variables[handle].handle_id
             }
-            crate::Expression::FunctionArgument(i) => {
-                self.function.parameters[i as usize].handle_id
-            }
+            crate::Expression::FunctionArgument(i) => match self.function.parameters[i as usize] {
+                FunctionArgument::Single(ref arg) => arg.handle_id,
+                FunctionArgument::ExternalTexture { .. } => unreachable!(),
+            },
             crate::Expression::Access { .. } | crate::Expression::AccessIndex { .. } => {
                 self.cached[expr_handle]
             }
@@ -1110,6 +1131,100 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
+    /// Generate code for an `ImageQuery::Size` expression for an `ImageClass::External` image.
+    fn write_external_image_size_query(
+        &mut self,
+        image: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        self.writer
+            .require_any("image queries", &[spirv::Capability::ImageQuery])?;
+
+        let (plane0_id, params_id) = match self.ir_function.expressions[image] {
+            crate::Expression::GlobalVariable(global) => (
+                self.writer.global_external_texture_variables[&global].planes[0].handle_id,
+                self.writer.global_external_texture_variables[&global]
+                    .params
+                    .handle_id,
+            ),
+            crate::Expression::FunctionArgument(index) => {
+                let FunctionArgument::ExternalTexture {
+                    ref planes,
+                    ref params,
+                } = self.function.parameters[index as usize]
+                else {
+                    unreachable!()
+                };
+                (planes[0].handle_id, params.instruction.result_id.unwrap())
+            }
+            _ => {
+                return Err(Error::Validation("Unexpected expression for image"));
+            }
+        };
+
+        // Fetch the size specified in the params buffer.
+        let vec2u_type_id = self.writer.get_vec2u_type_id();
+        let params_size_id = self.gen_id();
+        let external_texture_params_member_index_size = 6;
+        block.body.push(Instruction::composite_extract(
+            vec2u_type_id,
+            params_size_id,
+            params_id,
+            &[external_texture_params_member_index_size],
+        ));
+
+        // Query the size of plane 0.
+        let plane0_size_id = self.gen_id();
+        let mut query_instr = Instruction::image_query(
+            spirv::Op::ImageQuerySizeLod,
+            vec2u_type_id,
+            plane0_size_id,
+            plane0_id,
+        );
+        query_instr.add_operand(self.writer.get_index_constant(0));
+        block.body.push(query_instr);
+
+        // return any(params.size != 0) ? params.size : plane0_size
+        let zero_vec2u_id = self.writer.get_constant_null(vec2u_type_id);
+        let vec2b_type_id = self.writer.get_vec2_bool_type_id();
+        let params_size_not_eq_zero_id = self.gen_id();
+        block.body.push(Instruction::binary(
+            spirv::Op::INotEqual,
+            vec2b_type_id,
+            params_size_not_eq_zero_id,
+            params_size_id,
+            zero_vec2u_id,
+        ));
+        let bool_type_id = self.writer.get_bool_type_id();
+        let vec2_bool_type_id = self.writer.get_vec2_bool_type_id();
+        let any_params_size_not_eq_zero_id = self.gen_id();
+        block.body.push(Instruction::unary(
+            spirv::Op::Any,
+            bool_type_id,
+            any_params_size_not_eq_zero_id,
+            params_size_not_eq_zero_id,
+        ));
+        let condition_id = self.gen_id();
+        block.body.push(Instruction::composite_construct(
+            vec2_bool_type_id,
+            condition_id,
+            &[
+                any_params_size_not_eq_zero_id,
+                any_params_size_not_eq_zero_id,
+            ],
+        ));
+        let select_id = self.gen_id();
+        block.body.push(Instruction::select(
+            vec2u_type_id,
+            select_id,
+            condition_id,
+            params_size_id,
+            plane0_size_id,
+        ));
+
+        Ok(select_id)
+    }
+
     /// Generate code for an `ImageQuery` expression.
     ///
     /// The arguments are the components of an `Expression::ImageQuery` variant.
@@ -1122,9 +1237,22 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use crate::{ImageClass as Ic, ImageDimension as Id, ImageQuery as Iq};
 
-        let image_id = self.get_handle_id(image);
+        self.writer
+            .require_any("image queries", &[spirv::Capability::ImageQuery])?;
+
         let image_type = self.fun_info[image].ty.handle().unwrap();
         let (dim, arrayed, class) = match self.ir_module.types[image_type].inner {
+            crate::TypeInner::Image {
+                dim,
+                arrayed,
+                class: crate::ImageClass::External,
+            } => {
+                assert_eq!(dim, crate::ImageDimension::D2);
+                assert!(!arrayed);
+                assert_eq!(query, crate::ImageQuery::Size { level: None });
+                assert_eq!(result_type_id, self.writer.get_vec2u_type_id());
+                return self.write_external_image_size_query(image, block);
+            }
             crate::TypeInner::Image {
                 dim,
                 arrayed,
@@ -1134,9 +1262,7 @@ impl BlockContext<'_> {
                 return Err(Error::Validation("image type"));
             }
         };
-
-        self.writer
-            .require_any("image queries", &[spirv::Capability::ImageQuery])?;
+        let image_id = self.get_handle_id(image);
 
         let id = match query {
             Iq::Size { level } => {

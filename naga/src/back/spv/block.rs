@@ -12,7 +12,7 @@ use super::{
     Instruction, LocalType, LookupType, NumericType, ResultMember, WrappedFunction, Writer,
     WriterFlags,
 };
-use crate::{arena::Handle, proc::index::GuardedIndex, Statement};
+use crate::{arena::Handle, back::spv::FunctionArgument, proc::index::GuardedIndex, Statement};
 
 fn get_dimension(type_inner: &crate::TypeInner) -> Dimension {
     match *type_inner {
@@ -1643,15 +1643,77 @@ impl BlockContext<'_> {
                 array_index,
                 sample,
                 level,
-            } => self.write_image_load(
-                result_type_id,
-                image,
-                coordinate,
-                array_index,
-                level,
-                sample,
-                block,
-            )?,
+            } => match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
+                crate::TypeInner::Image {
+                    class: class @ crate::ImageClass::External,
+                    ..
+                } => {
+                    let id = self.gen_id();
+                    let (plane_ids, params_id) = match self.ir_function.expressions[image] {
+                        crate::Expression::GlobalVariable(global) => (
+                            self.writer.global_external_texture_variables[&global]
+                                .planes
+                                .each_ref()
+                                .map(|plane| plane.handle_id),
+                            self.writer.global_external_texture_variables[&global]
+                                .params
+                                .handle_id,
+                        ),
+                        crate::Expression::FunctionArgument(index) => {
+                            let FunctionArgument::ExternalTexture {
+                                ref planes,
+                                ref params,
+                            } = self.function.parameters[index as usize]
+                            else {
+                                unreachable!()
+                            };
+                            (
+                                planes.each_ref().map(|plane| plane.handle_id),
+                                params.instruction.result_id.unwrap(),
+                            )
+                        }
+                        _ => {
+                            return Err(Error::Validation("Unexpected expression for image"));
+                        }
+                    };
+                    let crate::TypeInner::Vector {
+                        size: crate::VectorSize::Bi,
+                        scalar: coord_scalar,
+                    } = *self.fun_info[coordinate]
+                        .ty
+                        .inner_with(&self.ir_module.types)
+                    else {
+                        unreachable!("coordinate must be a vector of size 2");
+                    };
+
+                    let function_id = self.writer.wrapped_functions[&WrappedFunction::ImageLoad {
+                        class,
+                        coord_scalar,
+                    }];
+                    block.body.push(Instruction::function_call(
+                        result_type_id,
+                        id,
+                        function_id,
+                        &[
+                            plane_ids[0],
+                            plane_ids[1],
+                            plane_ids[2],
+                            params_id,
+                            self.cached[coordinate],
+                        ],
+                    ));
+                    id
+                }
+                _ => self.write_image_load(
+                    result_type_id,
+                    image,
+                    coordinate,
+                    array_index,
+                    level,
+                    sample,
+                    block,
+                )?,
+            },
             crate::Expression::ImageSample {
                 image,
                 sampler,
@@ -1662,19 +1724,71 @@ impl BlockContext<'_> {
                 level,
                 depth_ref,
                 clamp_to_edge,
-            } => self.write_image_sample(
-                result_type_id,
-                image,
-                sampler,
-                gather,
-                coordinate,
-                array_index,
-                offset,
-                level,
-                depth_ref,
-                clamp_to_edge,
-                block,
-            )?,
+            } => match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
+                crate::TypeInner::Image {
+                    class: class @ crate::ImageClass::External,
+                    ..
+                } => {
+                    let id = self.gen_id();
+                    let (plane_ids, params_id) = match self.ir_function.expressions[image] {
+                        crate::Expression::GlobalVariable(global) => (
+                            self.writer.global_external_texture_variables[&global]
+                                .planes
+                                .each_ref()
+                                .map(|plane| plane.handle_id),
+                            self.writer.global_external_texture_variables[&global]
+                                .params
+                                .handle_id,
+                        ),
+                        crate::Expression::FunctionArgument(index) => {
+                            let FunctionArgument::ExternalTexture {
+                                ref planes,
+                                ref params,
+                            } = self.function.parameters[index as usize]
+                            else {
+                                unreachable!()
+                            };
+                            (
+                                planes.each_ref().map(|plane| plane.handle_id),
+                                params.instruction.result_id.unwrap(),
+                            )
+                        }
+                        _ => {
+                            return Err(Error::Validation("Unexpected expression for image"));
+                        }
+                    };
+
+                    let function_id =
+                        self.writer.wrapped_functions[&WrappedFunction::ImageSample { class }];
+                    block.body.push(Instruction::function_call(
+                        result_type_id,
+                        id,
+                        function_id,
+                        &[
+                            plane_ids[0],
+                            plane_ids[1],
+                            plane_ids[2],
+                            params_id,
+                            self.get_handle_id(sampler),
+                            self.cached[coordinate],
+                        ],
+                    ));
+                    id
+                }
+                _ => self.write_image_sample(
+                    result_type_id,
+                    image,
+                    sampler,
+                    gather,
+                    coordinate,
+                    array_index,
+                    offset,
+                    level,
+                    depth_ref,
+                    clamp_to_edge,
+                    block,
+                )?,
+            },
             crate::Expression::Select {
                 condition,
                 accept,
@@ -3322,7 +3436,37 @@ impl BlockContext<'_> {
                     let id = self.gen_id();
                     self.temp_list.clear();
                     for &argument in arguments {
-                        self.temp_list.push(self.cached[argument]);
+                        match *self.fun_info[argument].ty.inner_with(&self.ir_module.types) {
+                            crate::TypeInner::Image {
+                                class: crate::ImageClass::External,
+                                ..
+                            } => match self.ir_function.expressions[argument] {
+                                crate::Expression::FunctionArgument(index) => {
+                                    let FunctionArgument::ExternalTexture {
+                                        ref planes,
+                                        ref params,
+                                    } = self.function.parameters[index as usize]
+                                    else {
+                                        unreachable!();
+                                    };
+                                    self.temp_list.extend(
+                                        planes
+                                            .iter()
+                                            .map(|plane| plane.instruction.result_id.unwrap()),
+                                    );
+                                    self.temp_list.push(params.instruction.result_id.unwrap());
+                                }
+                                crate::Expression::GlobalVariable(handle) => {
+                                    let global =
+                                        &self.writer.global_external_texture_variables[&handle];
+                                    self.temp_list
+                                        .extend(global.planes.iter().map(|plane| plane.var_id));
+                                    self.temp_list.push(global.params.handle_id);
+                                }
+                                _ => unreachable!(),
+                            },
+                            _ => self.temp_list.push(self.cached[argument]),
+                        }
                     }
 
                     let type_id = match result {
