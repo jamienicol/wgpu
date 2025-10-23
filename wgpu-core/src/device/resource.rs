@@ -17,8 +17,8 @@ use arrayvec::ArrayVec;
 use bitflags::Flags;
 use smallvec::SmallVec;
 use wgt::{
-    math::align_to, DeviceLostReason, TextureFormat, TextureSampleType, TextureSelector,
-    TextureViewDimension,
+    math::align_to, DeviceLostReason, Extent2d, Origin2d, Rect, TextureFormat, TextureSampleType,
+    TextureSelector, TextureViewDimension,
 };
 
 #[cfg(feature = "trace")]
@@ -192,67 +192,98 @@ impl ExternalTextureParams {
         std::println!("crop_rect: {:?}", desc.crop_rect);
         std::println!("rotation: {:?}", desc.transform.rotation);
         std::println!("mirrored: {:?}", desc.transform.mirrored);
-        let crop = match desc.crop_rect {
-            Some(crop_rect) => glam::Affine2::from_scale_angle_translation(
-                glam::vec2(
-                    crop_rect.extent.width as f32 / plane0_size.width as f32,
-                    crop_rect.extent.height as f32 / plane0_size.height as f32,
-                ),
-                0.0,
-                glam::vec2(
-                    crop_rect.origin.x as f32 / plane0_size.width as f32,
-                    crop_rect.origin.y as f32 / plane0_size.height as f32,
-                ),
-            ),
-            None => glam::Affine2::IDENTITY,
-        };
 
-        let rotation = match desc.transform.rotation {
-            wgt::Rotation::Degrees0 => {
-                glam::Affine2::from_cols_array(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
-            }
-            wgt::Rotation::Degrees90 => {
-                glam::Affine2::from_cols_array(&[0.0, -1.0, 1.0, 0.0, 0.0, 1.0])
-            }
-            wgt::Rotation::Degrees180 => {
-                glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, -1.0, 1.0, 1.0])
-            }
-            wgt::Rotation::Degrees270 => {
-                glam::Affine2::from_cols_array(&[0.0, 1.0, -1.0, 0.0, 1.0, 0.0])
-            }
+        let crop_rect = desc.crop_rect.unwrap_or(Rect {
+            origin: Origin2d::ZERO,
+            extent: plane0_size,
+        });
+        let crop_origin = glam::vec2(crop_rect.origin.x as f32, crop_rect.origin.y as f32);
+        let crop_size = glam::vec2(
+            crop_rect.extent.width as f32,
+            crop_rect.extent.height as f32,
+        );
+        let plane0_size = glam::vec2(plane0_size.width as f32, plane0_size.height as f32);
+        let normalized_crop_origin = crop_origin / plane0_size;
+        let normalized_crop_size = crop_size / plane0_size;
+        
+        let sample_transform = {
+            let crop = match desc.crop_rect {
+                Some(crop_rect) => glam::Affine2::from_scale_angle_translation(
+                    normalized_crop_size,
+                    0.0,
+                    normalized_crop_origin,
+                ),
+                None => glam::Affine2::IDENTITY,
+            };
+    
+            let rotation = match desc.transform.rotation {
+                wgt::Rotation::Degrees0 => {
+                    glam::Affine2::from_cols_array(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+                }
+                wgt::Rotation::Degrees90 => {
+                    glam::Affine2::from_cols_array(&[0.0, -1.0, 1.0, 0.0, 0.0, 1.0])
+                }
+                wgt::Rotation::Degrees180 => {
+                    glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, -1.0, 1.0, 1.0])
+                }
+                wgt::Rotation::Degrees270 => {
+                    glam::Affine2::from_cols_array(&[0.0, 1.0, -1.0, 0.0, 1.0, 0.0])
+                }
+            };
+            let mirror = match desc.transform.mirrored {
+                true => glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, 1.0, 1.0, 0.0]),
+                false => glam::Affine2::IDENTITY,
+            };
+            // FIXME: we need to validate the crop rect is a subregion of plane0
+            // (not here, in the create function)
+    
+            // what order should these go in?
+            crop * rotation * mirror
         };
-        let mirror = match desc.transform.mirrored {
-            true => glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, 1.0, 1.0, 0.0]),
-            false => glam::Affine2::IDENTITY,
+        
+        let load_transform = {
+            // FIXME: handle different intrinsic and crop sizes
+            // need to scale from intrinsic to crop
+            let crop = glam::Affine2::from_translation(crop_origin);
+            let rotation = match desc.transform.rotation {
+                wgt::Rotation::Degrees0 => {
+                    glam::Affine2::from_cols_array(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+                }
+                wgt::Rotation::Degrees90 => {
+                    glam::Affine2::from_cols_array(&[0.0, -1.0, 1.0, 0.0, 0.0, crop_size.y - 1.0])
+                }
+                wgt::Rotation::Degrees180 => {
+                    glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, -1.0, crop_size.x - 1.0, crop_size.y - 1.0])
+                }
+                wgt::Rotation::Degrees270 => {
+                    glam::Affine2::from_cols_array(&[0.0, 1.0, -1.0, 0.0, crop_size.x - 1.0, 0.0])
+                }
+            };
+            let mirror = match desc.transform.mirrored {
+                true => glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, 1.0, desc.width as f32 - 1.0, 0.0]),
+                false => glam::Affine2::IDENTITY,
+            };
+            
+            // what order should these go in?
+            crop * rotation * mirror
         };
-        // FIXME handle y flip
-        // FIXME: we need to validate the crop rect is a subregion of plane0
-        // (not here, in the create function)
-
-        let sample_transform = crop * rotation * mirror;
+        
         std::println!("sample_transform: {:?}", sample_transform.to_cols_array());
-
-        let to_normalized = glam::Affine2::from_scale(glam::vec2(
-            1.0 / (desc.width - 1).max(1) as f32,
-            1.0 / (desc.height - 1).max(1) as f32,
-        ));
-
-        std::println!("to_normalized: {:?}", to_normalized.to_cols_array());
-
-        let to_unnormalized = glam::Affine2::from_scale(glam::vec2(
-            (plane0_size.width - 1) as f32,
-            (plane0_size.height - 1) as f32,
-        ));
-
-        // FIXME: load transforms aren't correct for rotation cases
-        let load_transform = to_unnormalized * sample_transform * to_normalized;
         std::println!("load_transform: {:?}", load_transform.to_cols_array());
 
-        for coord in [glam::vec2(0.0, 0.0), glam::vec2(0.0, 1.0), glam::vec2(0.0, 2.0), glam::vec2(0.0, 3.0)] {
-        // for coord in [glam::vec2(0.0, 0.0), glam::vec2(1.0, 0.0), glam::vec2(1.0, 0.0), glam::vec2(1.0, 1.0)] {
-            std::println!("coord: {coord:?}");
-            std::println!("transforms to: {:?}", load_transform.transform_point2(coord));
-        }
+        // for coord in [
+        //     glam::vec2(0.0, 0.0),
+        //     glam::vec2(0.0, 1.0),
+        //     glam::vec2(0.0, 2.0),
+        //     glam::vec2(0.0, 3.0),
+        // ] {
+        //     // for coord in [glam::vec2(0.0, 0.0), glam::vec2(1.0, 0.0), glam::vec2(1.0, 0.0), glam::vec2(1.0, 1.0)] {
+        //     std::println!("coord: {coord:?}");
+        //     std::println!(
+        //         "transforms to: {:?}",
+        //         load_transform.transform_point2(coord)
+        //     );
+        // }
 
         std::println!();
 
