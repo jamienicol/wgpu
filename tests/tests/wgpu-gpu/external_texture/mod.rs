@@ -122,16 +122,16 @@ const VERTICAL_FLIP_2X2_SAMPLE_TRANSFORM: [f32; 6] = [1.0, 0.0, 0.0, -1.0, 0.0, 
 const VERTICAL_FLIP_2X2_LOAD_TRANSFORM: [f32; 6] = [1.0, 0.0, 0.0, -1.0, 0.0, 1.0];
 // Rotates a 4x1 texture 90 degrees
 const ROTATE_90_4X1_SAMPLE_TRANSFORM: [f32; 6] = [0.0, -1.0, 1.0, 0.0, 0.0, 1.0];
-const ROTATE_90_4X1_LOAD_TRANSFORM: [f32; 6] = [0.0, 1.0, 1.0, 0.0, 0.0, 0.0];
+const ROTATE_90_4X1_LOAD_TRANSFORM: [f32; 6] = [0.0, -1.0, 1.0, 0.0, 0.0, 0.0];
 // Rotates a 4x1 texture 180 degrees
 const ROTATE_180_4X1_SAMPLE_TRANSFORM: [f32; 6] = [-1.0, 0.0, 0.0, -1.0, 1.0, 1.0];
-const ROTATE_180_4X1_LOAD_TRANSFORM: [f32; 6] = [-1.0, 0.0, 0.0, 0.0, 3.0, 0.0];
-// Rotates a 4xx1 texture 270 degrees
+const ROTATE_180_4X1_LOAD_TRANSFORM: [f32; 6] = [-1.0, 0.0, 0.0, -1.0, 3.0, 0.0];
+// Rotates a 4x1 texture 270 degrees
 const ROTATE_270_4X1_SAMPLE_TRANSFORM: [f32; 6] = [0.0, 1.0, -1.0, 0.0, 1.0, 0.0];
-const ROTATE_270_4X1_LOAD_TRANSFORM: [f32; 6] = [0.0, 0.0, -1.0, 0.0, 3.0, 0.0];
+const ROTATE_270_4X1_LOAD_TRANSFORM: [f32; 6] = [0.0, 1.0, -1.0, 0.0, 3.0, 0.0];
 // Crops the middle 2x2 pixels from a 4x4 texture
 const CROP_4X4_SAMPLE_TRANSFORM: [f32; 6] = [0.5, 0.0, 0.0, 0.5, 0.25, 0.25];
-const CROP_4X4_LOAD_TRANSFORM: [f32; 6] = [0.5, 0.0, 0.0, 0.5, 1.0, 1.0];
+const CROP_4X4_LOAD_TRANSFORM: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 
 /// Helper function to create a 2D texture and a view, optionally writing the
 /// provided data to the texture, and returning the view.
