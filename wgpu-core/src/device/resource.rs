@@ -167,7 +167,10 @@ pub struct ExternalTextureParams {
 }
 
 impl ExternalTextureParams {
-    pub fn from_desc<L>(desc: &wgt::ExternalTextureDescriptor<L>) -> Self {
+    pub fn from_plane0_and_desc<L>(
+        plane0: &TextureView,
+        desc: &wgt::ExternalTextureDescriptor<L>,
+    ) -> Self {
         let gamut_conversion_matrix = [
             desc.gamut_conversion_matrix[0],
             desc.gamut_conversion_matrix[1],
@@ -183,14 +186,84 @@ impl ExternalTextureParams {
             0.0, // padding
         ];
 
+        let plane0_size = plane0.parent.desc.size.to_2d();
+        std::println!("intrinsic size: ({}, {})", desc.width, desc.height);
+        std::println!("plane0_size: {plane0_size:?}");
+        std::println!("crop_rect: {:?}", desc.crop_rect);
+        std::println!("rotation: {:?}", desc.transform.rotation);
+        std::println!("mirrored: {:?}", desc.transform.mirrored);
+        let crop = match desc.crop_rect {
+            Some(crop_rect) => glam::Affine2::from_scale_angle_translation(
+                glam::vec2(
+                    crop_rect.extent.width as f32 / plane0_size.width as f32,
+                    crop_rect.extent.height as f32 / plane0_size.height as f32,
+                ),
+                0.0,
+                glam::vec2(
+                    crop_rect.origin.x as f32 / plane0_size.width as f32,
+                    crop_rect.origin.y as f32 / plane0_size.height as f32,
+                ),
+            ),
+            None => glam::Affine2::IDENTITY,
+        };
+
+        let rotation = match desc.transform.rotation {
+            wgt::Rotation::Degrees0 => {
+                glam::Affine2::from_cols_array(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+            }
+            wgt::Rotation::Degrees90 => {
+                glam::Affine2::from_cols_array(&[0.0, -1.0, 1.0, 0.0, 0.0, 1.0])
+            }
+            wgt::Rotation::Degrees180 => {
+                glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, -1.0, 1.0, 1.0])
+            }
+            wgt::Rotation::Degrees270 => {
+                glam::Affine2::from_cols_array(&[0.0, 1.0, -1.0, 0.0, 1.0, 0.0])
+            }
+        };
+        let mirror = match desc.transform.mirrored {
+            true => glam::Affine2::from_cols_array(&[-1.0, 0.0, 0.0, 1.0, 1.0, 0.0]),
+            false => glam::Affine2::IDENTITY,
+        };
+        // FIXME handle y flip
+        // FIXME: we need to validate the crop rect is a subregion of plane0
+        // (not here, in the create function)
+
+        let sample_transform = crop * rotation * mirror;
+        std::println!("sample_transform: {:?}", sample_transform.to_cols_array());
+
+        let to_normalized = glam::Affine2::from_scale(glam::vec2(
+            1.0 / (desc.width - 1).max(1) as f32,
+            1.0 / (desc.height - 1).max(1) as f32,
+        ));
+
+        std::println!("to_normalized: {:?}", to_normalized.to_cols_array());
+
+        let to_unnormalized = glam::Affine2::from_scale(glam::vec2(
+            (plane0_size.width - 1) as f32,
+            (plane0_size.height - 1) as f32,
+        ));
+
+        // FIXME: load transforms aren't correct for rotation cases
+        let load_transform = to_unnormalized * sample_transform * to_normalized;
+        std::println!("load_transform: {:?}", load_transform.to_cols_array());
+
+        for coord in [glam::vec2(0.0, 0.0), glam::vec2(0.0, 1.0), glam::vec2(0.0, 2.0), glam::vec2(0.0, 3.0)] {
+        // for coord in [glam::vec2(0.0, 0.0), glam::vec2(1.0, 0.0), glam::vec2(1.0, 0.0), glam::vec2(1.0, 1.0)] {
+            std::println!("coord: {coord:?}");
+            std::println!("transforms to: {:?}", load_transform.transform_point2(coord));
+        }
+
+        std::println!();
+
         Self {
             yuv_conversion_matrix: desc.yuv_conversion_matrix,
             gamut_conversion_matrix,
             src_transfer_function: desc.src_transfer_function,
             dst_transfer_function: desc.dst_transfer_function,
             size: [desc.width, desc.height],
-            sample_transform: desc.sample_transform,
-            load_transform: desc.load_transform,
+            sample_transform: sample_transform.to_cols_array(),
+            load_transform: load_transform.to_cols_array(),
             num_planes: desc.num_planes() as u32,
             _padding: Default::default(),
         }
@@ -1885,9 +1958,9 @@ impl Device {
                 plane.check_usage(wgt::TextureUsages::TEXTURE_BINDING)?;
                 Ok(plane.clone())
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<ArrayVec<_, 3>, _>>()?;
 
-        let params_data = ExternalTextureParams::from_desc(desc);
+        let params_data = ExternalTextureParams::from_plane0_and_desc(&planes[0], desc);
         let label = desc.label.as_ref().map(|l| alloc::format!("{l} params"));
         let params_desc = resource::BufferDescriptor {
             label: label.map(Cow::Owned),

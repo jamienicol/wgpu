@@ -175,6 +175,7 @@ bit-set.workspace = true
 bitflags.workspace = true
 bytemuck.workspace = true
 document-features.workspace = true
+glam.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
 log.workspace = true

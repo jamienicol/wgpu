@@ -4814,6 +4814,7 @@ dependencies = [
  "bytemuck",
  "cfg_aliases 0.2.1",
  "document-features",
+ "glam",
  "hashbrown 0.16.0",
  "indexmap",
  "log",

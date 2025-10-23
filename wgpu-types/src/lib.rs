@@ -6053,6 +6053,22 @@ impl core::fmt::Debug for Origin3d {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Extent2d {
+    /// Width of the extent
+    pub width: u32,
+    /// Height of the extent
+    pub height: u32,
+}
+
+impl core::fmt::Debug for Extent2d {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        (self.width, self.height).fmt(f)
+    }
+}
+
 /// Extent of a texture related operation.
 ///
 /// Corresponds to [WebGPU `GPUExtent3D`](
@@ -6150,6 +6166,15 @@ impl Extent3d {
                 TextureDimension::D2 => self.depth_or_array_layers,
                 TextureDimension::D3 => u32::max(1, self.depth_or_array_layers >> level),
             },
+        }
+    }
+    
+    /// Removes the third dimension from this extent
+    #[must_use]
+    pub fn to_2d(self) -> Extent2d {
+        Extent2d {
+            width: self.width,
+            height: self.height,
         }
     }
 }
@@ -6253,6 +6278,14 @@ fn test_max_mips() {
         .max_mips(TextureDimension::D3),
         6
     );
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Rect {
+    pub origin: Origin2d,
+    pub extent: Extent2d,
 }
 
 /// Describes a [`TextureView`].
@@ -6469,6 +6502,25 @@ impl Default for ExternalTextureTransferFunction {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Rotation {
+    #[default]
+    Degrees0,
+    Degrees90,
+    Degrees180,
+    Degrees270,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct ExternalTextureTransform {
+    pub rotation: Rotation,
+    pub mirrored: bool,
+}
+
 /// Describes an [`ExternalTexture`](../wgpu/struct.ExternalTexture.html).
 ///
 /// Note that [`width`] and [`height`] are the values that should be returned by
@@ -6491,8 +6543,7 @@ impl Default for ExternalTextureTransferFunction {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ExternalTextureDescriptor<L> {
-    /// Debug label of the external texture. This will show up in graphics
-    /// debuggers for easy identification.
+    /// Debug label of the external texture.
     pub label: L,
 
     /// Width of the external texture.
@@ -6530,37 +6581,8 @@ pub struct ExternalTextureDescriptor<L> {
     /// to encode linear RGB to non-linear RGB in the destination color space.
     pub dst_transfer_function: ExternalTextureTransferFunction,
 
-    /// Transform to apply to [`ImageSample`] coordinates.
-    ///
-    /// This is a 3x2 column-major matrix representing an affine transform from
-    /// normalized texture coordinates to the normalized coordinates that should
-    /// be sampled from the external texture's underlying plane(s).
-    ///
-    /// This transform may scale, translate, flip, and rotate in 90-degree
-    /// increments, but the result of transforming the rectangle (0,0)..(1,1)
-    /// must be an axis-aligned rectangle that falls within the bounds of
-    /// (0,0)..(1,1).
-    ///
-    /// [`ImageSample`]: https://docs.rs/naga/latest/naga/ir/enum.Expression.html#variant.ImageSample
-    pub sample_transform: [f32; 6],
-
-    /// Transform to apply to [`ImageLoad`] coordinates.
-    ///
-    /// This is a 3x2 column-major matrix representing an affine transform from
-    /// non-normalized texel coordinates to the non-normalized coordinates of
-    /// the texel that should be loaded from the external texture's underlying
-    /// plane 0. For planes 1 and 2, if present, plane 0's coordinates are
-    /// scaled according to the textures' relative sizes.
-    ///
-    /// This transform may scale, translate, flip, and rotate in 90-degree
-    /// increments, but the result of transforming the rectangle (0,0)..([`width`],
-    /// [`height`]) must be an axis-aligned rectangle that falls within the bounds
-    /// of (0,0)..([`width`], [`height`]).
-    ///
-    /// [`ImageLoad`]: https://docs.rs/naga/latest/naga/ir/enum.Expression.html#variant.ImageLoad
-    /// [`width`]: Self::width
-    /// [`height`]: Self::height
-    pub load_transform: [f32; 6],
+    pub crop_rect: Option<Rect>,
+    pub transform: ExternalTextureTransform,
 }
 
 impl<L> ExternalTextureDescriptor<L> {
@@ -6573,8 +6595,8 @@ impl<L> ExternalTextureDescriptor<L> {
             height: self.height,
             format: self.format,
             yuv_conversion_matrix: self.yuv_conversion_matrix,
-            sample_transform: self.sample_transform,
-            load_transform: self.load_transform,
+            crop_rect: self.crop_rect,
+            transform: self.transform,
             gamut_conversion_matrix: self.gamut_conversion_matrix,
             src_transfer_function: self.src_transfer_function,
             dst_transfer_function: self.dst_transfer_function,

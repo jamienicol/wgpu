@@ -1,4 +1,8 @@
 use approx::assert_abs_diff_eq;
+use wgpu::{
+    wgt::{Extent2d, ExternalTextureTransform, Rect},
+    Origin2d,
+};
 use wgpu_test::{
     gpu_test, GpuTestConfiguration, GpuTestInitializer, TestParameters, TestingContext,
 };
@@ -447,8 +451,8 @@ static EXTERNAL_TEXTURE_DIMENSIONS: GpuTestConfiguration = GpuTestConfiguration:
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: IDENTITY_SAMPLE_TRANSFORM,
-                load_transform: IDENTITY_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: Default::default(),
             },
             &[&view],
         );
@@ -498,8 +502,8 @@ static EXTERNAL_TEXTURE_LOAD: GpuTestConfiguration = GpuTestConfiguration::new()
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: IDENTITY_SAMPLE_TRANSFORM,
-                load_transform: IDENTITY_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: Default::default(),
             },
             &[&view],
         );
@@ -563,8 +567,8 @@ static EXTERNAL_TEXTURE_LOAD_YUV: GpuTestConfiguration = GpuTestConfiguration::n
                 gamut_conversion_matrix: BT601_TO_SRGB_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: SRGB_TRANSFER_FUNCTION,
                 dst_transfer_function: SRGB_TRANSFER_FUNCTION,
-                sample_transform: IDENTITY_SAMPLE_TRANSFORM,
-                load_transform: IDENTITY_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: Default::default(),
             },
             &[&y_view, &u_view, &v_view],
         );
@@ -614,8 +618,11 @@ static EXTERNAL_TEXTURE_LOAD_TRANSFORM: GpuTestConfiguration = GpuTestConfigurat
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: HORIZONTAL_FLIP_2X2_SAMPLE_TRANSFORM,
-                load_transform: HORIZONTAL_FLIP_2X2_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees0,
+                    mirrored: true,
+                },
             },
             &[&view_2x2],
         );
@@ -636,8 +643,11 @@ static EXTERNAL_TEXTURE_LOAD_TRANSFORM: GpuTestConfiguration = GpuTestConfigurat
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: VERTICAL_FLIP_2X2_SAMPLE_TRANSFORM,
-                load_transform: VERTICAL_FLIP_2X2_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees180,
+                    mirrored: true,
+                },
             },
             &[&view_2x2],
         );
@@ -671,8 +681,11 @@ static EXTERNAL_TEXTURE_LOAD_TRANSFORM: GpuTestConfiguration = GpuTestConfigurat
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: ROTATE_90_4X1_SAMPLE_TRANSFORM,
-                load_transform: ROTATE_90_4X1_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees90,
+                    mirrored: false,
+                },
             },
             &[&view_4x1],
         );
@@ -693,8 +706,11 @@ static EXTERNAL_TEXTURE_LOAD_TRANSFORM: GpuTestConfiguration = GpuTestConfigurat
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: ROTATE_180_4X1_SAMPLE_TRANSFORM,
-                load_transform: ROTATE_180_4X1_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees180,
+                    mirrored: false,
+                },
             },
             &[&view_4x1],
         );
@@ -715,8 +731,11 @@ static EXTERNAL_TEXTURE_LOAD_TRANSFORM: GpuTestConfiguration = GpuTestConfigurat
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: ROTATE_270_4X1_SAMPLE_TRANSFORM,
-                load_transform: ROTATE_270_4X1_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees270,
+                    mirrored: false,
+                },
             },
             &[&view_4x1],
         );
@@ -747,8 +766,14 @@ static EXTERNAL_TEXTURE_LOAD_TRANSFORM: GpuTestConfiguration = GpuTestConfigurat
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: CROP_4X4_SAMPLE_TRANSFORM,
-                load_transform: CROP_4X4_LOAD_TRANSFORM,
+                crop_rect: Some(Rect {
+                    origin: Origin2d { x: 1, y: 1 },
+                    extent: Extent2d {
+                        width: 2,
+                        height: 2,
+                    },
+                }),
+                transform: Default::default(),
             },
             &[&view_4x4],
         );
@@ -794,8 +819,8 @@ static EXTERNAL_TEXTURE_LOAD_INVALID_ADDRESS: GpuTestConfiguration = GpuTestConf
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: IDENTITY_SAMPLE_TRANSFORM,
-                load_transform: IDENTITY_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: Default::default(),
             },
             &[&view],
         );
@@ -854,8 +879,8 @@ static EXTERNAL_TEXTURE_SAMPLE: GpuTestConfiguration = GpuTestConfiguration::new
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: IDENTITY_SAMPLE_TRANSFORM,
-                load_transform: IDENTITY_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: Default::default(),
             },
             &[&view],
         );
@@ -919,8 +944,8 @@ static EXTERNAL_TEXTURE_SAMPLE_YUV: GpuTestConfiguration = GpuTestConfiguration:
                 gamut_conversion_matrix: BT601_TO_SRGB_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: SRGB_TRANSFER_FUNCTION,
                 dst_transfer_function: SRGB_TRANSFER_FUNCTION,
-                sample_transform: IDENTITY_SAMPLE_TRANSFORM,
-                load_transform: IDENTITY_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: Default::default(),
             },
             &[&y_view, &u_view, &v_view],
         );
@@ -975,8 +1000,11 @@ static EXTERNAL_TEXTURE_SAMPLE_TRANSFORM: GpuTestConfiguration = GpuTestConfigur
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: HORIZONTAL_FLIP_2X2_SAMPLE_TRANSFORM,
-                load_transform: HORIZONTAL_FLIP_2X2_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees0,
+                    mirrored: true,
+                },
             },
             &[&view_2x2],
         );
@@ -997,8 +1025,11 @@ static EXTERNAL_TEXTURE_SAMPLE_TRANSFORM: GpuTestConfiguration = GpuTestConfigur
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: VERTICAL_FLIP_2X2_SAMPLE_TRANSFORM,
-                load_transform: VERTICAL_FLIP_2X2_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees180,
+                    mirrored: true,
+                },
             },
             &[&view_2x2],
         );
@@ -1032,8 +1063,11 @@ static EXTERNAL_TEXTURE_SAMPLE_TRANSFORM: GpuTestConfiguration = GpuTestConfigur
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: ROTATE_90_4X1_SAMPLE_TRANSFORM,
-                load_transform: ROTATE_90_4X1_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees90,
+                    mirrored: false,
+                },
             },
             &[&view_4x1],
         );
@@ -1054,8 +1088,11 @@ static EXTERNAL_TEXTURE_SAMPLE_TRANSFORM: GpuTestConfiguration = GpuTestConfigur
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: ROTATE_180_4X1_SAMPLE_TRANSFORM,
-                load_transform: ROTATE_180_4X1_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees180,
+                    mirrored: false,
+                },
             },
             &[&view_4x1],
         );
@@ -1076,8 +1113,11 @@ static EXTERNAL_TEXTURE_SAMPLE_TRANSFORM: GpuTestConfiguration = GpuTestConfigur
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: ROTATE_270_4X1_SAMPLE_TRANSFORM,
-                load_transform: ROTATE_270_4X1_LOAD_TRANSFORM,
+                crop_rect: None,
+                transform: ExternalTextureTransform {
+                    rotation: wgpu::wgt::Rotation::Degrees270,
+                    mirrored: false,
+                },
             },
             &[&view_4x1],
         );
@@ -1108,8 +1148,14 @@ static EXTERNAL_TEXTURE_SAMPLE_TRANSFORM: GpuTestConfiguration = GpuTestConfigur
                 gamut_conversion_matrix: IDENTITY_GAMUT_CONVERSION_MATRIX,
                 src_transfer_function: Default::default(),
                 dst_transfer_function: Default::default(),
-                sample_transform: CROP_4X4_SAMPLE_TRANSFORM,
-                load_transform: CROP_4X4_LOAD_TRANSFORM,
+                crop_rect: Some(Rect {
+                    origin: Origin2d { x: 1, y: 1 },
+                    extent: Extent2d {
+                        width: 2,
+                        height: 2,
+                    },
+                }),
+                transform: Default::default(),
             },
             &[&view_4x4],
         );
